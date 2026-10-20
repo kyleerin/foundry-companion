@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en" data-theme="lysoria">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DM Companion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<style>
+  /* Lysoria: dark fantasy theme (stone, parchment, void violet, ember gold) */
+  [data-theme="lysoria"] {
+    color-scheme: dark;
+    --color-base-100: #1a1714;
+    --color-base-200: #110f0d;
+    --color-base-300: #0a0908;
+    --color-base-content: #e8dcc4;
+    --color-primary: #8b5cf6;
+    --color-primary-content: #f3eeff;
+    --color-secondary: #c9a227;
+    --color-secondary-content: #1a1405;
+    --color-accent: #b4532a;
+    --color-accent-content: #fff1e8;
+    --color-neutral: #2a2420;
+    --color-neutral-content: #d8ccb4;
+    --color-info: #6b8fb5;
+    --color-info-content: #0b1220;
+    --color-success: #6f9a4f;
+    --color-success-content: #0e1709;
+    --color-warning: #d4a017;
+    --color-warning-content: #1c1503;
+    --color-error: #a8323a;
+    --color-error-content: #fbe9ea;
+    --radius-selector: 0.25rem;
+    --radius-field: 0.25rem;
+    --radius-box: 0.375rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 1;
+    --noise: 1;
+  }
+  body {
+    font-family: "EB Garamond", Georgia, serif;
+    font-size: 17px;
+    background-image: radial-gradient(ellipse at top, rgb(139 92 246 / 0.08), transparent 60%);
+  }
+  .font-display { font-family: "Cinzel", Georgia, serif; }
+  /* hide number input spinners */
+  input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+</style>
+</head>
+<body class="min-h-screen bg-base-200">
+<header class="navbar sticky top-0 z-10 gap-3 flex-wrap bg-base-100/95 backdrop-blur border-b border-secondary/30 shadow-lg px-4">
+  <h1 class="font-display text-xl font-bold tracking-widest text-secondary mr-2">DM Companion</h1>
+
+  <nav>
+    <ul id="nav" class="menu menu-horizontal menu-sm gap-1 p-0 font-display tracking-wide">
+      <li><a data-view="scenes">Scenes</a></li>
+      <li><a data-view="initiative">Initiative</a></li>
+      <li class="menu-disabled tooltip tooltip-bottom" data-tip="Coming soon"><a>Encounters</a></li>
+      <li class="menu-disabled tooltip tooltip-bottom" data-tip="Coming soon"><a>Notes</a></li>
+    </ul>
+  </nav>
+
+  <details id="actions" class="dropdown">
+    <summary class="btn btn-sm btn-outline btn-secondary font-display tracking-wide">
+      Actions
+      <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m6 9 6 6 6-6"/></svg>
+    </summary>
+    <ul class="menu dropdown-content z-20 mt-2 w-60 rounded-box border border-secondary/20 bg-base-100 p-2 shadow-xl">
+      <li data-needs-foundry><a data-action="syncAll">Refresh from Foundry</a></li>
+      <li data-needs-foundry><a data-action="addSelectedTokens">Add selected tokens to combat</a></li>
+      <li data-needs-foundry><a data-action="togglePause">Pause / unpause game</a></li>
+      <li data-needs-foundry><a data-action="openFoundry">Open Foundry ↗</a></li>
+    </ul>
+  </details>
+
+  <div class="flex gap-2">
+    <span id="server-status" class="badge badge-soft badge-error gap-1">
+      <span class="status status-error"></span><span>Server</span>
+    </span>
+    <span id="foundry-status" class="badge badge-soft badge-error gap-1">
+      <span class="status status-error"></span><span>Foundry</span>
+    </span>
+  </div>
+  <label id="search-box" class="input ml-auto w-full sm:w-80">
+    <svg class="h-4 w-4 opacity-60" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="search" type="search" placeholder="Search scenes…" autocomplete="off">
+  </label>
+</header>
+
+<main id="view" class="p-4"></main>
+
+<dialog id="confirm" class="modal">
+  <div class="modal-box border border-secondary/30">
+    <h3 id="confirm-title" class="font-display text-lg text-secondary"></h3>
+    <p id="confirm-text" class="py-3"></p>
+    <div class="modal-action">
+      <button id="confirm-no" class="btn btn-ghost">Cancel</button>
+      <button id="confirm-yes" class="btn btn-error">Confirm</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="entry-dialog" class="modal">
+  <form id="entry-form" class="modal-box border border-secondary/30" method="dialog">
+    <h3 class="font-display text-lg text-secondary">Add custom entry</h3>
+    <p class="text-sm text-base-content/60">A tracker entry with no token, such as a lair action, hazard or timer.</p>
+
+    <fieldset class="fieldset mt-3">
+      <legend class="fieldset-legend">Name</legend>
+      <input id="entry-name" class="input w-full" required maxlength="80" placeholder="Lair Action" autocomplete="off">
+
+      <legend class="fieldset-legend">Initiative</legend>
+      <input id="entry-init" class="input w-28" type="number" value="20">
+
+      <legend class="fieldset-legend">Icon</legend>
+      <div id="entry-icons" class="flex flex-wrap gap-2"></div>
+
+      <label class="label mt-3 cursor-pointer gap-2">
+        <input id="entry-hidden" type="checkbox" class="checkbox checkbox-sm checkbox-secondary">
+        Hidden from players
+      </label>
+    </fieldset>
+
+    <div class="modal-action">
+      <button type="button" id="entry-cancel" class="btn btn-ghost">Cancel</button>
+      <button type="submit" class="btn btn-primary">Add entry</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast toast-center toast-bottom hidden z-30">
+  <div id="toast-alert" class="alert alert-success"><span id="toast-text"></span></div>
+</div>
+
+<script>
+  const state = {
+    connected: false,
+    foundryConnected: false,
+    foundry: {},
+    scenes: [],
+    combat: null,
+    favorites: [], // starred scene ids, in the order they were starred
+    pending: new Set(), // ids of things waiting on Foundry
+  };
+  const pendingRequests = new Map();
+  let socket;
+  let requestCounter = 0;
+  let currentView = "scenes";
+
+  const $ = (id) => document.getElementById(id);
+
+  function el(tag, className = "", text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function icon(path, size = "h-4 w-4") {
+    const span = el("span", "inline-flex");
+    span.innerHTML = `<svg class="${size}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+    return span;
+  }
+
+  const ICONS = {
+    prev: '<path d="m15 18-6-6 6-6"/>',
+    next: '<path d="m9 18 6-6-6-6"/>',
+    dice: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/><circle cx="15.5" cy="8.5" r="1"/><circle cx="8.5" cy="15.5" r="1"/>',
+    skull: '<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v2h8v-2"/><path d="m12.5 17-.5-1-.5 1h1z"/><path d="M16 20a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20"/>',
+    eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff: '<path d="m2 2 20 20"/><path d="M6.7 6.7C3.9 8.4 2 12 2 12s3 7 10 7c2 0 3.7-.5 5.2-1.3"/><path d="M10.6 5.1c.5-.1.9-.1 1.4-.1 7 0 10 7 10 7s-.6 1.4-1.9 3"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    star: '<path d="M11.5 2.9a.6.6 0 0 1 1 0l2.6 5.3 5.8.8a.6.6 0 0 1 .3 1l-4.2 4.1 1 5.8a.6.6 0 0 1-.8.6L12 17.8l-5.2 2.7a.6.6 0 0 1-.8-.6l1-5.8-4.2-4.1a.6.6 0 0 1 .3-1l5.8-.8z"/>',
+  };
+
+  // Foundry core icons offered for custom entries
+  const ENTRY_ICONS = [
+    { path: "icons/svg/castle.svg", label: "Lair" },
+    { path: "icons/svg/hazard.svg", label: "Hazard" },
+    { path: "icons/svg/clockwork.svg", label: "Timer" },
+    { path: "icons/svg/fire.svg", label: "Fire" },
+    { path: "icons/svg/lightning.svg", label: "Storm" },
+    { path: "icons/svg/skull.svg", label: "Death" },
+    { path: "icons/svg/eye.svg", label: "Watcher" },
+    { path: "icons/svg/mystery-man.svg", label: "Figure" },
+  ];
+
+  // ------------------------------------------------------------ connection
+
+  function connect() {
+    socket = new WebSocket(`ws://${location.host}/ws/ui`);
+    socket.onopen = () => { state.connected = true; render(); };
+    socket.onclose = () => {
+      state.connected = false;
+      state.foundryConnected = false;
+      for (const resolve of pendingRequests.values()) resolve({ ok: false, error: "Lost connection to the server" });
+      pendingRequests.clear();
+      state.pending.clear();
+      render();
+      setTimeout(connect, 2000);
+    };
+    socket.onmessage = (event) => handleMessage(JSON.parse(event.data));
+  }
+
+  function handleMessage(msg) {
+    if (msg.type === "state") {
+      state.foundryConnected = msg.foundryConnected;
+      state.foundry = msg.foundry || {};
+      state.scenes = msg.scenes || [];
+      state.combat = msg.combat || null;
+      state.favorites = msg.favorites || [];
+    } else if (msg.type === "favorites") {
+      state.favorites = msg.favorites;
+    } else if (msg.type === "scenes") {
+      state.scenes = msg.scenes;
+    } else if (msg.type === "combat") {
+      state.combat = msg.combat;
+    } else if (msg.type === "result") {
+      const resolve = pendingRequests.get(msg.requestId);
+      if (!resolve) return;
+      pendingRequests.delete(msg.requestId);
+      resolve(msg);
+    }
+    render();
+  }
+
+  // Send a command to Foundry; resolves with the {ok, result, error} reply.
+  function sendCommand(command, args = {}) {
+    if (socket?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the server" });
+    const requestId = `r${++requestCounter}`;
+    return new Promise((resolve) => {
+      pendingRequests.set(requestId, resolve);
+      socket.send(JSON.stringify({ type: "command", requestId, command, args }));
+    });
+  }
+
+  // Run a command, track it as pending under `key`, toast errors (and optionally success).
+  async function run(command, args = {}, { key, success } = {}) {
+    if (key) { state.pending.add(key); render(); }
+    const reply = await sendCommand(command, args);
+    if (key) state.pending.delete(key);
+    if (!reply.ok) toast(reply.error, true);
+    else if (success) toast(typeof success === "function" ? success(reply.result) : success);
+    render();
+    return reply;
+  }
+
+  function foundryUrl(path) {
+    if (!path) return null;
+    if (/^(https?:|data:)/.test(path)) return path;
+    return `${state.foundry.origin || "http://localhost:30000"}/${path.replace(/^\//, "")}`;
+  }
+
+  // ---------------------------------------------------------------- actions
+
+  const ACTIONS = {
+    syncAll: () => run("syncAll", {}, { success: (r) => `Loaded ${r.scenes} scenes` }),
+    addSelectedTokens: () => run("addSelectedTokens", {}, { success: (r) => `Added ${r.added} combatant${r.added === 1 ? "" : "s"}` }),
+    togglePause: () => run("togglePause", {}, { success: (r) => (r.paused ? "Game paused" : "Game unpaused") }),
+    openFoundry: () => window.open(state.foundry.origin || "http://localhost:30000", "_blank"),
+  };
+
+  $("actions").addEventListener("click", (event) => {
+    const link = event.target.closest("[data-action]");
+    if (!link || link.parentElement.classList.contains("menu-disabled")) return;
+    $("actions").open = false;
+    ACTIONS[link.dataset.action]();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!$("actions").contains(event.target)) $("actions").open = false;
+  });
+
+  // ------------------------------------------------------------- navigation
+
+  function setView(view) {
+    currentView = view;
+    try { localStorage.setItem("dmc-view", view); } catch {}
+    render();
+  }
+
+  $("nav").addEventListener("click", (event) => {
+    const link = event.target.closest("[data-view]");
+    if (link) setView(link.dataset.view);
+  });
+
+  // ----------------------------------------------------------------- render
+
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative };
+
+  function setStatus(id, on, label) {
+    const badge = $(id);
+    badge.className = `badge badge-soft gap-1 ${on ? "badge-success" : "badge-error"}`;
+    badge.firstElementChild.className = `status ${on ? "status-success" : "status-error"}`;
+    badge.lastElementChild.textContent = label;
+  }
+
+  function render() {
+    setStatus("server-status", state.connected, "Server");
+    setStatus("foundry-status", state.foundryConnected,
+      state.foundryConnected && state.foundry.world ? `Foundry · ${state.foundry.world}` : "Foundry");
+    document.querySelectorAll("[data-needs-foundry]").forEach((li) => li.classList.toggle("menu-disabled", !state.foundryConnected));
+    $("nav").querySelectorAll("[data-view]").forEach((a) => a.classList.toggle("menu-active", a.dataset.view === currentView));
+    $("search-box").classList.toggle("hidden", currentView !== "scenes");
+
+    // keep focus and typing in an input across re-renders
+    const active = document.activeElement;
+    const focusKey = active?.dataset?.key;
+    const focusValue = active?.value;
+    const focusCursor = active?.selectionStart;
+
+    const root = $("view");
+    root.replaceChildren();
+    if (!state.connected) root.append(emptyState("Can't reach the DM Companion server. Is it running?"));
+    else if (!state.foundryConnected) root.append(emptyState("Waiting for Foundry. Open your world as GM with the DM Companion Bridge module enabled.", true));
+    else VIEWS[currentView](root);
+
+    if (focusKey) {
+      const input = root.querySelector(`[data-key="${focusKey}"]`);
+      if (input) {
+        input.value = focusValue;
+        input.focus();
+        try { input.setSelectionRange(focusCursor, focusCursor); } catch {}
+      }
+    }
+  }
+
+  function emptyState(text, loading = false) {
+    const div = el("div", "flex flex-col items-center gap-4 py-24 text-center text-base-content/60");
+    if (loading) div.append(el("span", "loading loading-dots loading-lg"));
+    div.append(el("p", "", text));
+    return div;
+  }
+
+  // ----------------------------------------------------------------- scenes
+
+  function renderScenes(root) {
+    const query = $("search").value.trim().toLowerCase();
+    const scenes = state.scenes.filter((s) => !query || s.name.toLowerCase().includes(query) || s.folder.toLowerCase().includes(query));
+    if (!scenes.length) return root.append(emptyState(query ? "No scenes match your search." : "This world has no scenes."));
+
+    // favorites first, in the order they were starred
+    const byId = new Map(scenes.map((s) => [s.id, s]));
+    const favorites = state.favorites.map((id) => byId.get(id)).filter(Boolean);
+    if (favorites.length) {
+      root.append(sceneSection("★ Favorites", favorites, "text-primary border-primary/30"));
+    }
+
+    const folders = new Map();
+    for (const scene of scenes) {
+      const key = scene.folder || "No Folder";
+      if (!folders.has(key)) folders.set(key, []);
+      folders.get(key).push(scene);
+    }
+
+    for (const [name, list] of folders) root.append(sceneSection(name, list));
+  }
+
+  function sceneSection(name, list, headingColor = "text-secondary/80 border-secondary/20") {
+    const section = el("section", "mb-8");
+    section.append(el("h2", `font-display mb-3 pb-1 border-b text-sm font-semibold uppercase tracking-[0.2em] ${headingColor}`, name));
+    const grid = el("div", "grid gap-4 grid-cols-[repeat(auto-fill,minmax(200px,1fr))]");
+    list.forEach((scene) => grid.append(sceneCard(scene)));
+    section.append(grid);
+    return section;
+  }
+
+  function toggleFavorite(scene) {
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "toggleFavorite", sceneId: scene.id }));
+  }
+
+  function activateScene(scene) {
+    if (scene.active || state.pending.has(scene.id)) return;
+    run("activateScene", { sceneId: scene.id }, { key: scene.id, success: (r) => `Activated ${r.name}` });
+  }
+
+  function sceneCard(scene) {
+    const pending = state.pending.has(scene.id);
+    const favorite = state.favorites.includes(scene.id);
+    const wrap = el("div", "group relative transition duration-200 hover:-translate-y-1");
+    const card = el("button",
+      "relative block w-full aspect-[16/10] overflow-hidden rounded-md text-left " +
+      "bg-base-300 shadow-md ring-1 transition duration-200 cursor-pointer " +
+      "hover:shadow-xl hover:shadow-primary/20 " +
+      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary " +
+      (scene.active ? "ring-2 ring-primary shadow-lg shadow-primary/40" : "ring-secondary/15 hover:ring-secondary/50") +
+      (pending ? " opacity-60 cursor-progress" : ""));
+    card.title = scene.active ? `${scene.name} (active)` : `Activate ${scene.name}`;
+    card.onclick = () => activateScene(scene);
+
+    const url = foundryUrl(scene.thumb);
+    if (url) {
+      const img = el("img", "absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105");
+      img.src = url;
+      img.loading = "lazy";
+      img.alt = "";
+      card.append(img);
+    } else {
+      card.append(el("div", "absolute inset-0 grid place-items-center text-xs uppercase tracking-widest text-base-content/40", "No thumbnail"));
+    }
+
+    // gradient so the name stays readable over any image
+    card.append(el("div", "absolute inset-0 bg-linear-to-t from-black/90 via-black/30 to-transparent"));
+
+    const caption = el("div", "absolute inset-x-0 bottom-0 p-3");
+    caption.append(el("h3", "font-display text-sm font-semibold tracking-wide text-base-content truncate drop-shadow", scene.name));
+    card.append(caption);
+
+    if (scene.active) {
+      card.append(el("span",
+        "absolute top-2 left-2 rounded-sm bg-primary px-2 py-0.5 text-[11px] font-bold tracking-widest text-primary-content shadow",
+        "ACTIVE"));
+    }
+    if (pending) {
+      const overlay = el("div", "absolute inset-0 grid place-items-center bg-black/40");
+      overlay.append(el("span", "loading loading-spinner loading-md text-secondary"));
+      card.append(overlay);
+    }
+    wrap.append(card);
+
+    // star toggle; a sibling of the card button so the click doesn't activate the scene
+    const star = el("button",
+      "absolute top-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-black/50 backdrop-blur-sm transition " +
+      "hover:bg-black/70 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary " +
+      (favorite ? "text-secondary" : "text-base-content/70 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"));
+    star.title = favorite ? "Remove from favorites" : "Add to favorites";
+    star.append(icon(ICONS.star, "h-4 w-4"));
+    if (favorite) star.querySelector("svg").setAttribute("fill", "currentColor");
+    star.onclick = () => toggleFavorite(scene);
+    wrap.append(star);
+    return wrap;
+  }
+
+  // ------------------------------------------------------------- initiative
+
+  function button(label, className, onClick, { iconPath, key, title, disabled } = {}) {
+    const btn = el("button", `btn ${className}`);
+    if (iconPath) btn.append(icon(iconPath));
+    if (label) btn.append(el("span", "", label));
+    if (title) btn.title = title;
+    if (key && state.pending.has(key)) {
+      btn.disabled = true;
+      btn.prepend(el("span", "loading loading-spinner loading-xs"));
+    }
+    if (disabled) btn.disabled = true;
+    btn.onclick = onClick;
+    return btn;
+  }
+
+  function renderInitiative(root) {
+    const combat = state.combat;
+    const wrap = el("div", "mx-auto max-w-4xl");
+    root.append(wrap);
+
+    if (!combat) {
+      const empty = emptyState("No active combat. Select tokens in Foundry and add them to start one.");
+      const buttons = el("div", "flex flex-wrap justify-center gap-2");
+      buttons.append(button("Add selected tokens", "btn-primary", ACTIONS.addSelectedTokens, { key: "addSelectedTokens" }));
+      buttons.append(button("Add custom entry", "btn-outline btn-secondary", openEntryDialog));
+      empty.append(buttons);
+      return wrap.append(empty);
+    }
+
+    // header: round, turn, controls
+    const bar = el("div", "mb-4 flex flex-wrap items-center gap-3 rounded-box border border-secondary/20 bg-base-100 p-3 shadow-lg");
+    const round = el("div", "mr-auto");
+    round.append(el("div", "font-display text-xs uppercase tracking-[0.25em] text-secondary/70", combat.started ? "Round" : "Not started"));
+    round.append(el("div", "font-display text-3xl font-bold leading-none text-secondary", combat.started ? String(combat.round) : "—"));
+    bar.append(round);
+
+    const controls = el("div", "flex flex-wrap gap-2");
+    if (!combat.started) {
+      controls.append(button("Roll NPCs", "btn-sm btn-outline", () => run("combatRollNPC", {}, { key: "roll" }), { iconPath: ICONS.dice, key: "roll" }));
+      controls.append(button("Roll all", "btn-sm btn-outline", () => run("combatRollAll", {}, { key: "roll" }), { iconPath: ICONS.dice, key: "roll" }));
+      controls.append(button("Start combat", "btn-sm btn-primary", () => run("combatStart", {}, { key: "turn", success: "Combat started" }), { key: "turn" }));
+    } else {
+      controls.append(button("", "btn-sm btn-outline btn-square", () => run("combatPrevious", {}, { key: "turn" }), { iconPath: ICONS.prev, title: "Previous turn", key: "turn" }));
+      controls.append(button("Next turn", "btn-sm btn-primary", () => run("combatNext", {}, { key: "turn" }), { iconPath: ICONS.next, key: "turn" }));
+      controls.append(button("Roll NPCs", "btn-sm btn-ghost", () => run("combatRollNPC", {}, { key: "roll" }), { iconPath: ICONS.dice, key: "roll" }));
+    }
+    controls.append(button("Add entry", "btn-sm btn-outline btn-secondary", openEntryDialog, { title: "Add a custom entry (lair action, hazard, timer)" }));
+    controls.append(button("End", "btn-sm btn-ghost text-error", endCombat, { title: "End combat" }));
+    bar.append(controls);
+    wrap.append(bar);
+
+    if (!combat.combatants.length) return wrap.append(emptyState("No combatants yet. Select tokens in Foundry and use Actions → Add selected tokens."));
+
+    const list = el("ol", "flex flex-col gap-2");
+    combat.combatants.forEach((c) => list.append(combatantRow(c, combat)));
+    wrap.append(list);
+  }
+
+  async function removeCombatant(c) {
+    // custom entries are cheap to recreate; confirm only for token combatants
+    if (!c.isCustom && !(await confirmDialog(`Remove ${c.name}?`, "This removes them from the combat tracker in Foundry."))) return;
+    run("combatRemove", { combatantId: c.id }, { success: `Removed ${c.name}` });
+  }
+
+  // ---- custom entry dialog
+
+  let selectedIcon = ENTRY_ICONS[0].path;
+
+  function renderEntryIcons() {
+    const box = $("entry-icons");
+    box.replaceChildren();
+    for (const { path, label } of ENTRY_ICONS) {
+      const btn = el("button",
+        "flex w-16 flex-col items-center gap-1 rounded-md border p-2 text-xs transition " +
+        (path === selectedIcon ? "border-secondary bg-secondary/10 text-secondary" : "border-base-content/10 hover:border-secondary/50"));
+      btn.type = "button";
+      const img = el("img", "h-8 w-8");
+      img.src = foundryUrl(path);
+      img.alt = "";
+      btn.append(img, el("span", "", label));
+      btn.onclick = () => { selectedIcon = path; renderEntryIcons(); };
+      box.append(btn);
+    }
+  }
+
+  function openEntryDialog() {
+    $("entry-form").reset();
+    selectedIcon = ENTRY_ICONS[0].path;
+    renderEntryIcons();
+    $("entry-dialog").showModal();
+    $("entry-name").focus();
+  }
+
+  $("entry-cancel").onclick = () => $("entry-dialog").close();
+
+  $("entry-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = $("entry-name").value.trim();
+    if (!name) return;
+    const initRaw = $("entry-init").value;
+    $("entry-dialog").close();
+    run("combatAddCustom", {
+      name,
+      initiative: initRaw === "" ? null : Number(initRaw),
+      img: selectedIcon,
+      hidden: $("entry-hidden").checked,
+    }, { success: `Added ${name}` });
+  });
+
+  async function endCombat() {
+    if (await confirmDialog("End combat?", "This deletes the combat encounter in Foundry.")) {
+      run("combatEnd", {}, { success: "Combat ended" });
+    }
+  }
+
+  function combatantRow(c, combat) {
+    const current = combat.started && c.isCurrent;
+    const row = el("li",
+      "flex flex-wrap items-center gap-3 rounded-box border bg-base-100 p-2 pr-3 shadow transition " +
+      (current ? "border-primary ring-2 ring-primary/40 shadow-lg shadow-primary/30" : "border-secondary/10") +
+      (c.defeated ? " opacity-50" : ""));
+
+    // initiative
+    const init = el("input",
+      "input input-sm w-14 text-center font-display text-lg font-bold " + (current ? "text-primary" : "text-secondary"));
+    init.type = "number";
+    init.value = c.initiative ?? "";
+    init.placeholder = "–";
+    init.title = "Initiative";
+    init.dataset.key = `init-${c.id}`;
+    init.onchange = () => {
+      const value = init.value === "" ? null : Number(init.value);
+      run("combatSetInitiative", { combatantId: c.id, value });
+    };
+    row.append(init);
+
+    // portrait + name
+    const avatar = el("div", "avatar");
+    const frame = el("div", "h-11 w-11 rounded-md ring-1 ring-secondary/30 bg-base-300");
+    const url = foundryUrl(c.img);
+    if (url) {
+      const img = el("img");
+      img.src = url;
+      img.alt = "";
+      frame.append(img);
+    }
+    avatar.append(frame);
+    row.append(avatar);
+
+    const who = el("div", "min-w-0 flex-1");
+    const name = el("div", "font-display truncate font-semibold tracking-wide" + (c.defeated ? " line-through" : ""), c.name);
+    who.append(name);
+    const tags = el("div", "flex flex-wrap gap-1 mt-0.5");
+    if (c.isCustom) tags.append(el("span", "badge badge-xs badge-secondary badge-soft", "Custom"));
+    else tags.append(el("span", `badge badge-xs ${c.isNPC ? "badge-accent" : "badge-info"} badge-soft`, c.isNPC ? "NPC" : "PC"));
+    if (c.hidden) tags.append(el("span", "badge badge-xs badge-ghost", "Hidden"));
+    if (current) tags.append(el("span", "badge badge-xs badge-primary", "Current turn"));
+    who.append(tags);
+    row.append(who);
+
+    // AC
+    if (c.ac != null) {
+      const ac = el("div", "flex flex-col items-center text-secondary/80");
+      ac.title = "Armor Class";
+      ac.append(icon(ICONS.shield, "h-4 w-4"));
+      ac.append(el("span", "font-display text-sm font-bold leading-none", String(c.ac)));
+      row.append(ac);
+    }
+
+    // HP
+    if (c.hp) row.append(hpBlock(c));
+
+    // toggles
+    const toggles = el("div", "flex gap-1");
+    toggles.append(button("", `btn-xs btn-square ${c.hidden ? "btn-ghost text-base-content/40" : "btn-ghost"}`,
+      () => run("combatToggleHidden", { combatantId: c.id }), { iconPath: c.hidden ? ICONS.eyeOff : ICONS.eye, title: c.hidden ? "Reveal" : "Hide" }));
+    toggles.append(button("", `btn-xs btn-square ${c.defeated ? "btn-error" : "btn-ghost"}`,
+      () => run("combatToggleDefeated", { combatantId: c.id }), { iconPath: ICONS.skull, title: c.defeated ? "Mark alive" : "Mark defeated" }));
+    toggles.append(button("", "btn-xs btn-square btn-ghost hover:text-error",
+      () => removeCombatant(c), { iconPath: ICONS.close, title: "Remove from combat" }));
+    row.append(toggles);
+
+    return row;
+  }
+
+  function hpBlock(c) {
+    const { value, max, temp } = c.hp;
+    const pct = max ? Math.max(0, Math.min(100, Math.round((value / max) * 100))) : 0;
+    const color = pct > 50 ? "progress-success" : pct > 25 ? "progress-warning" : "progress-error";
+
+    const block = el("div", "flex items-center gap-2");
+    const meter = el("div", "w-28");
+    const label = el("div", "flex justify-between text-xs");
+    label.append(el("span", "font-semibold", `${value} / ${max}`));
+    if (temp) label.append(el("span", "text-info", `+${temp}`));
+    meter.append(label);
+    const bar = el("progress", `progress ${color} h-2 w-full`);
+    bar.max = 100;
+    bar.value = pct;
+    meter.append(bar);
+    block.append(meter);
+
+    // damage / heal
+    const join = el("div", "join");
+    const amount = el("input", "input input-xs join-item w-14 text-center");
+    amount.type = "number";
+    amount.min = "0";
+    amount.placeholder = "HP";
+    amount.dataset.key = `hp-${c.id}`;
+    const apply = (sign) => {
+      const n = Math.abs(Number(amount.value));
+      if (!n) return;
+      amount.value = "";
+      amount.blur();
+      run("combatApplyDamage", { combatantId: c.id, amount: sign * n }, { key: `hp-${c.id}` });
+    };
+    amount.onkeydown = (e) => { if (e.key === "Enter") apply(e.shiftKey ? -1 : 1); };
+    amount.title = "Enter = damage, Shift+Enter = heal";
+    join.append(amount);
+    join.append(button("Dmg", "btn-xs join-item btn-error btn-soft", () => apply(1), { key: `hp-${c.id}` }));
+    join.append(button("Heal", "btn-xs join-item btn-success btn-soft", () => apply(-1), { key: `hp-${c.id}` }));
+    block.append(join);
+    return block;
+  }
+
+  // ------------------------------------------------------------- utilities
+
+  function confirmDialog(title, text) {
+    $("confirm-title").textContent = title;
+    $("confirm-text").textContent = text;
+    $("confirm").showModal();
+    return new Promise((resolve) => {
+      const done = (answer) => {
+        $("confirm").close();
+        $("confirm-yes").onclick = $("confirm-no").onclick = null;
+        resolve(answer);
+      };
+      $("confirm-yes").onclick = () => done(true);
+      $("confirm-no").onclick = () => done(false);
+      $("confirm").onclose = () => resolve(false);
+    });
+  }
+
+  let toastTimer;
+  function toast(text, isError = false) {
+    $("toast-text").textContent = text;
+    $("toast-alert").className = `alert ${isError ? "alert-error" : "alert-success"}`;
+    $("toast").classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 2500);
+  }
+
+  $("search").addEventListener("input", render);
+  try { currentView = localStorage.getItem("dmc-view") || "scenes"; } catch {}
+  if (!VIEWS[currentView]) currentView = "scenes";
+  connect();
+  render();
+</script>
+</body>
+</html>

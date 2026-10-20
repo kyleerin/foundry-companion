@@ -1,0 +1,12 @@
+{
+  "id": "dm-companion",
+  "title": "DM Companion Bridge",
+  "description": "Connects Foundry to the local DM Companion web app.",
+  "version": "0.1.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14"
+  },
+  "authors": [{ "name": "Kyle" }],
+  "esmodules": ["scripts/bridge.js"]
+}

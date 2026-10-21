@@ -57,6 +57,10 @@ class State:
         self.combat = None  # last combat state sent by Foundry
         self.favorites = JsonStore(DATA_DIR / "favorites.json", {})  # world key -> [scene ids]
         self.clocks = JsonStore(DATA_DIR / "clocks.json", [])  # progress clocks, shared across worlds
+        # artwork shown in Foundry: {"items": [{id, name, src, shown}], "layout": "column" | "row"}
+        self.showcase = JsonStore(DATA_DIR / "showcase.json", {"items": [], "layout": "column"})
+        if isinstance(self.showcase.data, list):  # older files held just the items
+            self.showcase.data = {"items": self.showcase.data, "layout": "column"}
 
     def world_key(self):
         return self.foundry_info.get("worldId") or self.foundry_info.get("world")
@@ -93,6 +97,18 @@ class State:
         self.clocks.data = valid
         self.clocks.save()
 
+    def set_showcase(self, showcase):
+        if not isinstance(showcase, dict) or not isinstance(showcase.get("items"), list):
+            return
+        items = [
+            {"id": i["id"][:40], "name": str(i.get("name") or "")[:80], "src": i["src"][:500], "shown": i.get("shown") is not False}
+            for i in showcase["items"][:50]
+            if isinstance(i, dict) and isinstance(i.get("id"), str) and isinstance(i.get("src"), str) and i["src"]
+        ]
+        layout = "row" if showcase.get("layout") == "row" else "column"
+        self.showcase.data = {"items": items, "layout": layout}
+        self.showcase.save()
+
     def snapshot(self):
         return {
             "type": "state",
@@ -102,6 +118,7 @@ class State:
             "combat": self.combat,
             "favorites": self.world_favorites(),
             "clocks": self.clocks.data,
+            "showcase": self.showcase.data,
         }
 
     async def broadcast(self, message):
@@ -154,6 +171,7 @@ async def foundry_ws(request):
                 log.info("Foundry world: %s (v%s)", data.get("world"), data.get("version"))
                 await state.broadcast(state.snapshot())
                 await ws.send_str(json.dumps({"type": "clocks", "clocks": state.clocks.data}))
+                await ws.send_str(json.dumps({"type": "showcase", "showcase": state.showcase.data}))
             elif kind == "scenes":
                 state.scenes = data.get("scenes", [])
                 await state.broadcast({"type": "scenes", "scenes": state.scenes})
@@ -209,6 +227,12 @@ async def ui_ws(request):
                 await state.broadcast({"type": "clocks", "clocks": state.clocks.data})
                 if state.foundry is not None:
                     await state.foundry.send_str(json.dumps({"type": "clocks", "clocks": state.clocks.data}))
+            elif data.get("type") == "setShowcase":
+                state.set_showcase(data.get("showcase"))
+                message = json.dumps({"type": "showcase", "showcase": state.showcase.data})
+                await state.broadcast({"type": "showcase", "showcase": state.showcase.data})
+                if state.foundry is not None:
+                    await state.foundry.send_str(message)
     finally:
         state.ui_clients.discard(ws)
     return ws

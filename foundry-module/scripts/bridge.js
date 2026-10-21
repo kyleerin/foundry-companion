@@ -1,7 +1,7 @@
 // DM Companion Bridge
 // Runs in the GM's browser. Connects to the local DM Companion server,
 // sends world data to it, and runs commands it receives.
-// Progress clocks marked visible are saved in a world setting and drawn on every client.
+// Progress clocks and the artwork showcase are saved in world settings and drawn on every client.
 
 const MODULE_ID = "dm-companion";
 const RETRY_MAX_MS = 15000;
@@ -28,10 +28,18 @@ Hooks.once("init", () => {
     default: [],
     onChange: () => renderClocks(),
   });
+  game.settings.register(MODULE_ID, "showcase", {
+    scope: "world",
+    config: false,
+    type: Object,
+    default: { items: [], layout: "column" },
+    onChange: () => renderShowcase(),
+  });
 });
 
 Hooks.once("ready", () => {
   renderClocks();
+  renderShowcase();
   if (!game.user.isGM) return;
   connect();
 
@@ -84,6 +92,7 @@ function connect() {
     }
     if (data.type === "command") handleCommand(data);
     else if (data.type === "clocks") saveClocks(data.clocks);
+    else if (data.type === "showcase") saveShowcase(data.showcase);
   });
 
   socket.addEventListener("close", () => {
@@ -130,10 +139,9 @@ function renderClocks() {
   let root = document.getElementById("dmc-clocks");
   if (!clocks.length) return root?.remove();
   if (!root) {
-    ensureClockStyles();
     root = document.createElement("div");
     root.id = "dmc-clocks";
-    document.body.append(root);
+    overlay().prepend(root);
   }
   root.innerHTML = clocks.map((c) => `
     <div class="dmc-clock${c.filled >= c.segments ? " done" : ""}">
@@ -142,34 +150,106 @@ function renderClocks() {
       <div class="dmc-clock-count">${c.filled} / ${c.segments}</div>
     </div>`).join("");
   root.querySelectorAll(".dmc-clock-name").forEach((label, i) => (label.textContent = clocks[i].name));
-  placeClocks();
 }
 
-// top right, just left of the sidebar (which can be collapsed or resized)
-function placeClocks() {
-  const root = document.getElementById("dmc-clocks");
-  const sidebar = document.getElementById("sidebar");
+// ---------------------------------------------------------------- showcase
+
+let showcaseCollapsed = false; // per client
+
+async function saveShowcase(showcase) {
+  const items = (showcase?.items ?? []).filter((i) => i.shown !== false).map(({ id, name, src }) => ({ id, name, src }));
+  const value = { items, layout: showcase?.layout === "row" ? "row" : "column" };
+  if (JSON.stringify(value) === JSON.stringify(game.settings.get(MODULE_ID, "showcase"))) return;
+  await game.settings.set(MODULE_ID, "showcase", value);
+}
+
+// every shown portrait at once, stacked in a column or lined up in a row
+function renderShowcase() {
+  const { items = [], layout = "column" } = game.settings.get(MODULE_ID, "showcase") ?? {};
+  let root = document.getElementById("dmc-showcase");
+  if (!items.length) return root?.remove();
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "dmc-showcase";
+    overlay().append(root);
+  }
+  root.className = `${layout}${showcaseCollapsed ? " collapsed" : ""}`;
+  root.innerHTML = `
+    <a class="dmc-showcase-toggle" title="${showcaseCollapsed ? "Show artwork" : "Hide artwork"}">
+      <i class="fa-solid fa-${showcaseCollapsed ? "image" : "chevron-up"}"></i>${showcaseCollapsed ? ` ${items.length}` : ""}
+    </a>
+    ${showcaseCollapsed ? "" : `<div class="dmc-showcase-items">${items.map(() => `
+      <div class="dmc-showcase-item"><img alt="" title="Click to enlarge"><div class="dmc-showcase-name"></div></div>`).join("")}
+    </div>`}`;
+  root.querySelectorAll(".dmc-showcase-item").forEach((item, i) => {
+    const { name, src } = items[i];
+    item.querySelector(".dmc-showcase-name").textContent = name;
+    const img = item.querySelector("img");
+    img.src = src;
+    img.onclick = () => {
+      const Popout = foundry.applications?.apps?.ImagePopout ?? globalThis.ImagePopout;
+      new Popout({ src, window: { title: name } }).render({ force: true });
+    };
+  });
+  root.querySelector(".dmc-showcase-toggle").onclick = () => {
+    showcaseCollapsed = !showcaseCollapsed;
+    renderShowcase();
+  };
+}
+
+// ----------------------------------------------------------------- overlay
+
+// top-right column for clocks and the showcase, just left of the sidebar
+function overlay() {
+  let root = document.getElementById("dmc-overlay");
+  if (!root) {
+    ensureOverlayStyles();
+    root = document.createElement("div");
+    root.id = "dmc-overlay";
+    document.body.append(root);
+    placeOverlay();
+  }
+  return root;
+}
+
+function placeOverlay() {
+  const root = document.getElementById("dmc-overlay");
   if (!root) return;
-  const left = sidebar?.getBoundingClientRect().left;
+  const left = document.getElementById("sidebar")?.getBoundingClientRect().left;
   root.style.right = `${left ? Math.max(12, window.innerWidth - left + 12) : 12}px`;
 }
 
-Hooks.on("collapseSidebar", () => setTimeout(placeClocks, 300)); // after the collapse animation
-window.addEventListener("resize", () => placeClocks());
+Hooks.on("collapseSidebar", () => setTimeout(placeOverlay, 300)); // after the collapse animation
+window.addEventListener("resize", () => placeOverlay());
 
-function ensureClockStyles() {
-  if (document.getElementById("dmc-clock-styles")) return;
+function ensureOverlayStyles() {
+  if (document.getElementById("dmc-overlay-styles")) return;
   const style = document.createElement("style");
-  style.id = "dmc-clock-styles";
+  style.id = "dmc-overlay-styles";
   style.textContent = `
-    #dmc-clocks { position: fixed; top: 12px; right: 12px; z-index: 70;
-      display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 50vw; pointer-events: none; }
+    #dmc-overlay { position: fixed; top: 12px; right: 12px; z-index: 70; display: flex; flex-direction: column;
+      align-items: flex-end; gap: 10px; max-width: 70vw; pointer-events: none; }
+    #dmc-clocks { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
     .dmc-clock { width: 96px; padding: 8px 6px 6px; text-align: center; border-radius: 6px;
       background: rgba(17, 15, 13, 0.85); border: 1px solid rgba(201, 162, 39, 0.4); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
     .dmc-clock.done { border-color: #b4532a; }
     .dmc-clock svg { width: 64px; height: 64px; display: block; margin: 0 auto 4px; }
     .dmc-clock-name { color: #e8dcc4; font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
     .dmc-clock-count { color: #c9a227; font-size: 11px; }
+    #dmc-showcase { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: auto; }
+    .dmc-showcase-toggle { color: #c9a227; cursor: pointer; font-size: 12px; padding: 2px 8px; border-radius: 4px;
+      background: rgba(17, 15, 13, 0.85); border: 1px solid rgba(201, 162, 39, 0.4); }
+    .dmc-showcase-items { display: flex; gap: 8px; }
+    #dmc-showcase.column .dmc-showcase-items { flex-direction: column; align-items: flex-end;
+      max-height: calc(100vh - 160px); overflow-y: auto; }
+    #dmc-showcase.row .dmc-showcase-items { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; max-width: 70vw; }
+    .dmc-showcase-item { flex: 0 0 auto; width: auto; margin: 0; padding: 4px; border-radius: 6px; background: rgba(17, 15, 13, 0.92);
+      border: 1px solid rgba(201, 162, 39, 0.4); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
+    .dmc-showcase-item img { display: block; margin: 0; padding: 0; border: 0; border-radius: 4px; cursor: zoom-in; background: #0a0908; object-fit: contain; }
+    #dmc-showcase.column .dmc-showcase-item img { width: 150px; max-height: 190px; }
+    #dmc-showcase.row .dmc-showcase-item img { height: 170px; max-width: 150px; }
+    .dmc-showcase-name { color: #e8dcc4; font-size: 12px; text-align: center; padding-top: 3px;
+      max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   `;
   document.head.append(style);
 }
@@ -340,18 +420,14 @@ const COMMANDS = {
     return { name: actor?.name ?? name, linked: Boolean(actor) };
   },
 
-  // show an NPC's or player character's portrait to everyone, like "Show Players" on an image
-  async showArtwork({ name, character = false }) {
+  // an NPC's or player character's portrait, for the showcase
+  async findArtwork({ name, character = false }) {
     const actor = findActor(name, character);
     if (!actor) throw new Error(`No Foundry actor named ${name}`);
     const fallback = CONST.DEFAULT_TOKEN ?? "icons/svg/mystery-man.svg";
     const src = [actor.img, actor.prototypeToken?.texture?.src].find((img) => img && img !== fallback);
     if (!src) throw new Error(`${actor.name} has no artwork`);
-    const Popout = foundry.applications?.apps?.ImagePopout ?? globalThis.ImagePopout;
-    const popout = new Popout({ src, uuid: actor.uuid, window: { title: actor.name } });
-    await popout.render({ force: true });
-    await popout.shareImage();
-    return { name: actor.name };
+    return { name: actor.name, src };
   },
 
   async combatRemove({ combatantId }) {

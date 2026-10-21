@@ -85,6 +85,7 @@
       <li><a data-view="npcs">NPCs</a></li>
       <li><a data-view="notes">Notes</a></li>
       <li><a data-view="clocks">Clocks</a></li>
+      <li><a data-view="showcase">Showcase</a></li>
     </ul>
   </nav>
 
@@ -98,6 +99,7 @@
       <li data-needs-foundry><a data-action="addSelectedTokens">Add selected tokens to combat</a></li>
       <li data-needs-foundry><a data-action="togglePause">Pause / unpause game</a></li>
       <li data-needs-foundry><a data-action="openFoundry">Open Foundry ↗</a></li>
+      <li><a data-action="clearView">Clear artwork from Foundry</a></li>
     </ul>
   </details>
 
@@ -199,6 +201,8 @@
     playerDashboard: null, // vault target of the Player Dashboard note
     clocks: [], // progress clocks: {id, name, segments, filled}
     clockDraft: { name: "", segments: 4 }, // the new clock form
+    showcase: [], // artwork shown in Foundry: {id, name, src, shown}
+    showcaseLayout: "column", // how Foundry lays out the shown artwork: "column" or "row"
     drawer: [], // stack of linked notes open in the drawer: {target, heading, note}
     openEncounters: new Set(), // expanded encounter names
   };
@@ -273,6 +277,11 @@
       state.combat = msg.combat || null;
       state.favorites = msg.favorites || [];
       state.clocks = msg.clocks || [];
+      state.showcase = msg.showcase?.items || [];
+      state.showcaseLayout = msg.showcase?.layout || "column";
+    } else if (msg.type === "showcase") {
+      state.showcase = msg.showcase.items;
+      state.showcaseLayout = msg.showcase.layout;
     } else if (msg.type === "clocks") {
       state.clocks = msg.clocks;
     } else if (msg.type === "favorites") {
@@ -324,6 +333,12 @@
     addSelectedTokens: () => run("addSelectedTokens", {}, { success: (r) => `Added ${r.added} combatant${r.added === 1 ? "" : "s"}` }),
     togglePause: () => run("togglePause", {}, { success: (r) => (r.paused ? "Game paused" : "Game unpaused") }),
     openFoundry: () => window.open(state.foundry.origin || "http://localhost:30000", "_blank"),
+    // hides all showcase artwork; it stays on the Showcase page to show again
+    clearView: () => {
+      if (!state.showcase.some((i) => i.shown)) return toast("No artwork is showing");
+      saveShowcase(state.showcase.map((i) => ({ ...i, shown: false })));
+      toast("Artwork cleared from Foundry");
+    },
   };
 
   $("actions").addEventListener("click", (event) => {
@@ -359,8 +374,8 @@
 
   // ----------------------------------------------------------------- render
 
-  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes, clocks: renderClocks };
-  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes", "clocks"]);
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes, clocks: renderClocks, showcase: renderShowcase };
+  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes", "clocks", "showcase"]);
   const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…" }; // views that work without Foundry
 
   function setStatus(id, on, label) {
@@ -570,13 +585,36 @@
     wrap.append(list);
   }
 
-  // shows the matching Foundry actor's portrait to all players
+  // adds the matching Foundry actor's portrait to the showcase, or removes it when already shown
   function artworkButton(name, character) {
     const key = `art:${name}`;
-    return button("", "btn-xs btn-ghost btn-square -mt-1", (event) => {
+    const shown = state.showcase.filter((i) => i.shown && sameName(i.name, name));
+    return button("", `btn-xs btn-square -mt-1 ${shown.length ? "btn-secondary btn-soft" : "btn-ghost"}`, async (event) => {
       event.stopPropagation();
-      run("showArtwork", { name, character }, { key, success: (r) => `Showing ${r.name} to players` });
-    }, { iconPath: ICONS.image, key, title: state.foundryConnected ? "Show artwork in Foundry" : "Connect Foundry to show artwork", disabled: !state.foundryConnected });
+      if (shown.length) {
+        saveShowcase(state.showcase.filter((i) => !shown.includes(i)));
+        return toast(`${shown[0].name} removed from the showcase`);
+      }
+      state.pending.add(key);
+      render();
+      const reply = await sendCommand("findArtwork", { name, character });
+      state.pending.delete(key);
+      if (!reply.ok) {
+        toast(reply.error, true);
+        return render();
+      }
+      const { name: actorName, src } = reply.result;
+      const existing = state.showcase.find((i) => i.src === src);
+      saveShowcase(existing
+        ? state.showcase.map((i) => (i === existing ? { ...i, shown: true } : i))
+        : [...state.showcase, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: actorName, src, shown: true }]);
+      toast(`${actorName} added to the showcase`);
+    }, {
+      iconPath: ICONS.image,
+      key,
+      title: shown.length ? "Remove from the showcase" : state.foundryConnected ? "Add artwork to the showcase" : "Connect Foundry to add artwork",
+      disabled: !shown.length && !state.foundryConnected,
+    });
   }
 
   function addToInitiative(name, key, character = false) {
@@ -1137,6 +1175,80 @@
     buttons.append(button("", "btn-sm btn-ghost btn-square text-error", () => deleteClock(c), { iconPath: ICONS.close, title: "Delete clock" }));
     side.append(buttons);
     card.append(side);
+    return card;
+  }
+
+  // --------------------------------------------------------------- showcase
+
+  function saveShowcase(items, layout = state.showcaseLayout) {
+    state.showcase = items;
+    state.showcaseLayout = layout;
+    socket?.send(JSON.stringify({ type: "setShowcase", showcase: { items, layout } }));
+    render();
+  }
+
+  function updateShowcase(id, changes) {
+    saveShowcase(state.showcase.map((i) => (i.id === id ? { ...i, ...changes } : i)));
+  }
+
+  function moveShowcase(index, by) {
+    const items = [...state.showcase];
+    [items[index], items[index + by]] = [items[index + by], items[index]];
+    saveShowcase(items);
+  }
+
+  function renderShowcase(root) {
+    const wrap = el("div", "mx-auto max-w-5xl");
+    root.append(wrap);
+
+    const shownCount = state.showcase.filter((i) => i.shown).length;
+    const bar = el("div", "mb-4 flex flex-wrap items-center gap-3 rounded-box border border-secondary/20 bg-base-100 p-3 shadow-lg");
+    bar.append(el("span", "font-display text-xs uppercase tracking-[0.25em] text-secondary/70", "In Foundry"));
+    bar.append(el("span", "font-display font-semibold tracking-wide", `${shownCount} of ${state.showcase.length} shown`));
+    const layout = el("div", "join");
+    for (const [value, label] of [["column", "Column"], ["row", "Row"]]) {
+      const option = el("button", `btn btn-sm join-item ${state.showcaseLayout === value ? "btn-secondary" : "btn-outline btn-secondary"}`, label);
+      option.title = value === "column" ? "Stack the artwork down the right side" : "Line the artwork up along the top";
+      option.onclick = () => saveShowcase(state.showcase, value);
+      layout.append(option);
+    }
+    bar.append(layout);
+    const actions = el("div", "ml-auto flex flex-wrap gap-2");
+    actions.append(button("Show all", "btn-sm btn-outline btn-secondary", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: true }))), { disabled: shownCount === state.showcase.length }));
+    actions.append(button("Hide all", "btn-sm btn-outline", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: false }))), { disabled: !shownCount }));
+    actions.append(button("Clear", "btn-sm btn-ghost text-error", async () => {
+      if (await confirmDialog("Clear the showcase?", "This removes all artwork from the list.")) saveShowcase([]);
+    }, { disabled: !state.showcase.length }));
+    bar.append(actions);
+    wrap.append(bar);
+
+    if (!state.showcase.length) return wrap.append(emptyState("No artwork yet. Use the image button on a Players or NPCs card to add a portrait."));
+
+    const grid = el("div", "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4");
+    state.showcase.forEach((item, index) => grid.append(showcaseCard(item, index)));
+    wrap.append(grid);
+  }
+
+  function showcaseCard(item, index) {
+    const card = el("div", `flex flex-col overflow-hidden rounded-box border bg-base-100 shadow transition ${item.shown ? "border-secondary/60" : "border-secondary/15 opacity-60"}`);
+    const frame = el("button", "relative block aspect-square w-full bg-base-300");
+    frame.title = item.shown ? "Shown in Foundry (click to hide)" : "Hidden (click to show)";
+    frame.onclick = () => updateShowcase(item.id, { shown: !item.shown });
+    const img = el("img", "h-full w-full object-contain");
+    img.src = foundryUrl(item.src);
+    img.alt = item.name;
+    img.loading = "lazy";
+    frame.append(img);
+    frame.append(el("span", `badge badge-sm absolute left-2 top-2 ${item.shown ? "badge-secondary" : "badge-ghost"}`, item.shown ? "Shown" : "Hidden"));
+    card.append(frame);
+
+    const foot = el("div", "flex items-center gap-1 p-2");
+    foot.append(el("div", "min-w-0 flex-1 truncate font-display font-semibold tracking-wide text-secondary", item.name));
+    foot.append(button("", "btn-xs btn-ghost btn-square", () => moveShowcase(index, -1), { iconPath: ICONS.prev, title: "Move earlier in Foundry", disabled: index === 0 }));
+    foot.append(button("", "btn-xs btn-ghost btn-square", () => moveShowcase(index, 1), { iconPath: ICONS.next, title: "Move later in Foundry", disabled: index === state.showcase.length - 1 }));
+    foot.append(button("", "btn-xs btn-ghost btn-square", () => updateShowcase(item.id, { shown: !item.shown }), { iconPath: item.shown ? ICONS.eye : ICONS.eyeOff, title: item.shown ? "Hide" : "Show" }));
+    foot.append(button("", "btn-xs btn-ghost btn-square text-error", () => saveShowcase(state.showcase.filter((i) => i.id !== item.id)), { iconPath: ICONS.close, title: "Remove" }));
+    card.append(foot);
     return card;
   }
 

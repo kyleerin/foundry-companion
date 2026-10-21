@@ -24,6 +24,7 @@ DATA_DIR = Path(os.environ.get("DMC_DATA_DIR", ROOT / "data"))
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
 VAULT_DIR = Path(os.environ.get("DMC_VAULT_DIR", Path.home() / "Documents" / "Lysoria"))
 SESSIONS_DIR = VAULT_DIR / "Story" / "Act 1" / "Sessions"
+NPCS_DIR = VAULT_DIR / "NPCs"
 
 log = logging.getLogger("dm-companion")
 
@@ -191,6 +192,10 @@ async def ui_ws(request):
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 META_RE = re.compile(r"^\*\*(Type|Difficulty|Duration|Location)\*\*:\s*(.+)$")
+NPC_FIELD_RE = re.compile(r"^\*\*(Race|Occupation|Faction|Location)(?::\*\*|\*\*:)\s*(.+)$")
+# headings, tables, rules, quotes, embeds, URLs, bold-only lines and "**Label:**" lines don't make a summary
+NPC_SKIP_RE = re.compile(r"^(#|\||---|>|!\[|https?://|\*\*[^*]+\*\*$|\*\*[^*]+(:\*\*|\*\*:)|\w+:\s)")
+NPC_TABLE_RE = re.compile(r"^\|\s*(Class/Role|Faction|Location)\s*\|\s*(.+?)\s*\|$")
 
 
 def natural_key(name):
@@ -283,6 +288,28 @@ async def api_vault_note(request):
                               "path": str(path.relative_to(VAULT_DIR)), "markdown": text.strip()})
 
 
+def parse_npc(path):
+    fields = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        match = NPC_FIELD_RE.match(line) or NPC_TABLE_RE.match(line)
+        if match:
+            key = "occupation" if match.group(1) == "Class/Role" else match.group(1).lower()
+            fields.setdefault(key, match.group(2).strip())
+        elif "summary" not in fields:
+            text = re.sub(r"^([-*+]|\d+\.)\s+", "", line)
+            if re.search(r"[a-z]{3}", text) and not NPC_SKIP_RE.match(text):
+                fields["summary"] = text
+    target = str(path.relative_to(VAULT_DIR).with_suffix(""))
+    return {"name": path.stem, "target": target, **fields}
+
+
+async def api_npcs(_request):
+    paths = NPCS_DIR.rglob("*.md") if NPCS_DIR.is_dir() else []
+    npcs = sorted((parse_npc(p) for p in paths), key=lambda n: natural_key(n["name"]))
+    return web.json_response({"npcs": npcs})
+
+
 async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -297,6 +324,7 @@ def make_app():
     app.router.add_get("/api/encounters", api_encounters)
     app.router.add_get("/api/note", api_note)
     app.router.add_get("/api/vault-note", api_vault_note)
+    app.router.add_get("/api/npcs", api_npcs)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

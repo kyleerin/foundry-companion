@@ -227,6 +227,20 @@ const COMMANDS = {
     return { name };
   },
 
+  // a vault NPC: linked to the world actor with that name when there is one, so HP and initiative rolls work
+  async combatAddNpc({ name }) {
+    if (!name) throw new Error("Name is required");
+    const wanted = String(name).trim().toLowerCase();
+    const actor = game.actors.find((a) => a.name.toLowerCase() === wanted)
+      ?? game.actors.find((a) => a.name.toLowerCase().startsWith(wanted));
+    let combat = activeCombat();
+    if (!combat) combat = await Combat.implementation.create({ scene: canvas.scene?.id ?? null, active: true });
+    await combat.createEmbeddedDocuments("Combatant", [actor
+      ? { actorId: actor.id, name: actor.name, img: actor.img }
+      : { name: String(name).slice(0, 80), img: "icons/svg/mystery-man.svg" }]);
+    return { name: actor?.name ?? name, linked: Boolean(actor) };
+  },
+
   async combatRemove({ combatantId }) {
     await requireCombatant(combatantId).delete();
     return {};

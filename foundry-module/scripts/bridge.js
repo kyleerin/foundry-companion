@@ -213,6 +213,13 @@ function sameName(a, b) {
   return a === b || /^[ ,(]/.test(a.slice(b.length)) && a.startsWith(b) || /^[ ,(]/.test(b.slice(a.length)) && b.startsWith(a);
 }
 
+// world actor by name, preferring player characters when `character` is set
+function findActor(name, character = false) {
+  const wanted = String(name).trim().toLowerCase();
+  const actors = character ? [...game.actors.filter((a) => a.type === "character"), ...game.actors] : [...game.actors];
+  return actors.find((a) => a.name.toLowerCase() === wanted) ?? actors.find((a) => sameName(a.name, wanted));
+}
+
 function activeCombat() {
   return game.combats.active ?? game.combat ?? null;
 }
@@ -319,9 +326,7 @@ const COMMANDS = {
   // (its token on the current scene if placed), so HP and initiative rolls work; else a plain entry
   async combatAddByName({ name, character = false }) {
     if (!name) throw new Error("Name is required");
-    const wanted = String(name).trim().toLowerCase();
-    const actors = character ? [...game.actors.filter((a) => a.type === "character"), ...game.actors] : [...game.actors];
-    const actor = actors.find((a) => a.name.toLowerCase() === wanted) ?? actors.find((a) => sameName(a.name, wanted));
+    const actor = findActor(name, character);
     let combat = activeCombat();
     if (!combat) combat = await Combat.implementation.create({ scene: canvas.scene?.id ?? null, active: true });
     const inCombat = new Set(combat.combatants.map((c) => c.tokenId).filter(Boolean));
@@ -333,6 +338,20 @@ const COMMANDS = {
         : { name: String(name).slice(0, 80), img: "icons/svg/mystery-man.svg" }]);
     if (!combat.active) await combat.activate();
     return { name: actor?.name ?? name, linked: Boolean(actor) };
+  },
+
+  // show an NPC's or player character's portrait to everyone, like "Show Players" on an image
+  async showArtwork({ name, character = false }) {
+    const actor = findActor(name, character);
+    if (!actor) throw new Error(`No Foundry actor named ${name}`);
+    const fallback = CONST.DEFAULT_TOKEN ?? "icons/svg/mystery-man.svg";
+    const src = [actor.img, actor.prototypeToken?.texture?.src].find((img) => img && img !== fallback);
+    if (!src) throw new Error(`${actor.name} has no artwork`);
+    const Popout = foundry.applications?.apps?.ImagePopout ?? globalThis.ImagePopout;
+    const popout = new Popout({ src, uuid: actor.uuid, window: { title: actor.name } });
+    await popout.render({ force: true });
+    await popout.shareImage();
+    return { name: actor.name };
   },
 
   async combatRemove({ combatantId }) {

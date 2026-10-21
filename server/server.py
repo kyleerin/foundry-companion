@@ -264,6 +264,15 @@ async def api_encounters(request):
     return web.json_response({"session": session, "encounters": encounters})
 
 
+async def api_note(request):
+    session = request.query.get("session", "")
+    if session not in list_sessions():
+        raise web.HTTPNotFound(text="No such session")
+    text = (SESSIONS_DIR / f"{session}.md").read_text(encoding="utf-8")
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)  # drop frontmatter
+    return web.json_response({"session": session, "markdown": text.strip()})
+
+
 async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -276,6 +285,7 @@ def make_app():
     app.router.add_get("/ws/ui", ui_ws)
     app.router.add_get("/api/sessions", api_sessions)
     app.router.add_get("/api/encounters", api_encounters)
+    app.router.add_get("/api/note", api_note)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

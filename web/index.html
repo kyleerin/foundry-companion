@@ -55,6 +55,7 @@
   /* rendered vault markdown */
   .md { line-height: 1.55; }
   .md > * + * { margin-top: 0.75em; }
+  .md h1 { font-family: "Cinzel", Georgia, serif; color: var(--color-secondary); font-size: 1.3rem; letter-spacing: 0.06em; }
   .md h2, .md h3, .md h4 { font-family: "Cinzel", Georgia, serif; color: var(--color-secondary); letter-spacing: 0.04em; margin-top: 1.4em; }
   .md h2 { font-size: 1.1rem; border-bottom: 1px solid color-mix(in oklab, var(--color-secondary) 25%, transparent); padding-bottom: 0.2em; }
   .md h3 { font-size: 1rem; }
@@ -79,7 +80,7 @@
       <li><a data-view="scenes">Scenes</a></li>
       <li><a data-view="initiative">Initiative</a></li>
       <li><a data-view="encounters">Encounters</a></li>
-      <li class="menu-disabled tooltip tooltip-bottom" data-tip="Coming soon"><a>Notes</a></li>
+      <li><a data-view="notes">Notes</a></li>
     </ul>
   </nav>
 
@@ -95,6 +96,11 @@
       <li data-needs-foundry><a data-action="openFoundry">Open Foundry ↗</a></li>
     </ul>
   </details>
+
+  <label class="select select-sm select-secondary w-52 font-display">
+    <span class="label text-xs uppercase tracking-widest text-secondary/70">Session</span>
+    <select id="session-select"></select>
+  </label>
 
   <div class="flex gap-2">
     <span id="server-status" class="badge badge-soft badge-error gap-1">
@@ -167,6 +173,7 @@
     sessions: null, // session note names from the vault
     session: null, // selected session
     encounters: null, // encounters of the selected session; null while loading
+    note: null, // markdown of the selected session note; null while loading
     openEncounters: new Set(), // expanded encounter names
   };
   const pendingRequests = new Map();
@@ -299,12 +306,15 @@
     if (!$("actions").contains(event.target)) $("actions").open = false;
   });
 
+  $("session-select").addEventListener("change", (event) => {
+    loadSession(event.target.value);
+  });
+
   // ------------------------------------------------------------- navigation
 
   function setView(view) {
     currentView = view;
     try { localStorage.setItem("dmc-view", view); } catch {}
-    if (view === "encounters") loadSessions();
     render();
   }
 
@@ -315,8 +325,8 @@
 
   // ----------------------------------------------------------------- render
 
-  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters };
-  const OFFLINE_VIEWS = new Set(["encounters"]); // views that work without Foundry
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, notes: renderNotes };
+  const OFFLINE_VIEWS = new Set(["encounters", "notes"]); // views that work without Foundry
 
   function setStatus(id, on, label) {
     const badge = $(id);
@@ -332,6 +342,7 @@
     document.querySelectorAll("[data-needs-foundry]").forEach((li) => li.classList.toggle("menu-disabled", !state.foundryConnected));
     $("nav").querySelectorAll("[data-view]").forEach((a) => a.classList.toggle("menu-active", a.dataset.view === currentView));
     $("search-box").classList.toggle("hidden", currentView !== "scenes");
+    renderSessionSelect();
 
     // keep focus and typing in an input across re-renders
     const active = document.activeElement;
@@ -688,7 +699,7 @@
     return block;
   }
 
-  // ------------------------------------------------------------- encounters
+  // --------------------------------------------------------------- sessions
 
   async function getJson(url) {
     const res = await fetch(url);
@@ -706,24 +717,47 @@
     let saved = null;
     try { saved = localStorage.getItem("dmc-session"); } catch {}
     const pick = [state.session, saved].find((s) => s && state.sessions.includes(s)) || state.sessions.at(-1);
-    if (pick) await loadEncounters(pick);
+    if (pick) await loadSession(pick);
     else render();
   }
 
-  async function loadEncounters(session) {
+  async function loadSession(session) {
     if (session !== state.session) state.openEncounters.clear();
     state.session = session;
     state.encounters = null;
+    state.note = null;
     try { localStorage.setItem("dmc-session", session); } catch {}
     render();
-    try {
-      const data = await getJson(`/api/encounters?session=${encodeURIComponent(session)}`);
-      if (state.session === session) state.encounters = data.encounters;
-    } catch (err) {
-      if (state.session === session) state.encounters = [];
-      toast(`Couldn't load ${session}: ${err.message}`, true);
-    }
+    const query = `session=${encodeURIComponent(session)}`;
+    const [encounters, note] = await Promise.allSettled([getJson(`/api/encounters?${query}`), getJson(`/api/note?${query}`)]);
+    if (state.session !== session) return;
+    state.encounters = encounters.status === "fulfilled" ? encounters.value.encounters : [];
+    state.note = note.status === "fulfilled" ? note.value.markdown : "";
+    const failed = [encounters, note].find((r) => r.status === "rejected");
+    if (failed) toast(`Couldn't load ${session}: ${failed.reason.message}`, true);
     render();
+  }
+
+  function renderSessionSelect() {
+    const select = $("session-select");
+    if (document.activeElement === select) return;
+    select.disabled = !state.sessions?.length;
+    select.replaceChildren();
+    if (!state.sessions?.length) select.append(el("option", "", state.sessions ? "No sessions" : "Loading…"));
+    for (const name of state.sessions || []) {
+      const option = el("option", "", name);
+      option.value = name;
+      option.selected = name === state.session;
+      select.append(option);
+    }
+  }
+
+  function sessionBar(extra) {
+    const bar = el("div", "mb-4 flex flex-wrap items-center gap-3 rounded-box border border-secondary/20 bg-base-100 p-3 shadow-lg");
+    bar.append(el("span", "font-display text-xs uppercase tracking-[0.25em] text-secondary/70", "Session"));
+    bar.append(el("span", "font-display font-semibold tracking-wide", state.session || "None"));
+    if (extra) bar.append(el("span", "ml-auto text-sm text-base-content/60", extra));
+    return bar;
   }
 
   // Obsidian wikilinks -> highlighted text; embeds are dropped
@@ -744,23 +778,8 @@
     const wrap = el("div", "mx-auto max-w-4xl");
     root.append(wrap);
 
-    const bar = el("div", "mb-4 flex flex-wrap items-center gap-3 rounded-box border border-secondary/20 bg-base-100 p-3 shadow-lg");
-    bar.append(el("span", "font-display text-xs uppercase tracking-[0.25em] text-secondary/70", "Session"));
-    const select = el("select", "select select-sm w-56 font-display");
-    select.disabled = !state.sessions?.length;
-    for (const name of state.sessions || []) {
-      const option = el("option", "", name);
-      option.value = name;
-      option.selected = name === state.session;
-      select.append(option);
-    }
-    select.onchange = () => loadEncounters(select.value);
-    bar.append(select);
-    if (state.encounters?.length) {
-      bar.append(el("span", "ml-auto text-sm text-base-content/60",
-        `${state.encounters.length} encounter${state.encounters.length === 1 ? "" : "s"}`));
-    }
-    wrap.append(bar);
+    wrap.append(sessionBar(state.encounters?.length &&
+      `${state.encounters.length} encounter${state.encounters.length === 1 ? "" : "s"}`));
 
     if (state.sessions === null || (state.session && state.encounters === null)) return wrap.append(emptyState("Loading…", true));
     if (!state.sessions.length) return wrap.append(emptyState("No session notes found in Story/Act 1/Sessions."));
@@ -770,6 +789,22 @@
     state.encounters.forEach((e) => list.append(encounterCard(e)));
     wrap.append(list);
   }
+
+  function renderNotes(root) {
+    const wrap = el("div", "mx-auto max-w-4xl");
+    root.append(wrap);
+    wrap.append(sessionBar());
+
+    if (state.sessions === null || (state.session && state.note === null)) return wrap.append(emptyState("Loading…", true));
+    if (!state.sessions.length) return wrap.append(emptyState("No session notes found in Story/Act 1/Sessions."));
+    if (!state.note) return wrap.append(emptyState(`${state.session} is empty.`));
+
+    const body = el("article", "md rounded-box border border-secondary/20 bg-base-100 p-6 shadow-lg");
+    body.innerHTML = markdownHtml(state.note);
+    wrap.append(body);
+  }
+
+  // ------------------------------------------------------------- encounters
 
   function encounterCard(e) {
     if (!e.found) {
@@ -833,7 +868,7 @@
   $("search").addEventListener("input", render);
   try { currentView = localStorage.getItem("dmc-view") || "scenes"; } catch {}
   if (!VIEWS[currentView]) currentView = "scenes";
-  if (currentView === "encounters") loadSessions();
+  loadSessions();
   connect();
   render();
 </script>

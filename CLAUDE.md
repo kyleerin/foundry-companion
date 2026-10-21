@@ -12,7 +12,7 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 ```
 
 - `server/server.py` — Python 3.9 + aiohttp (in `.venv`). Serves `web/`, relays messages, keeps last scenes/combat state, stores per-world data in `data/` (gitignored). Localhost origins only.
-- `web/index.html` — single-file UI. Tailwind v4 browser CDN + daisyUI 5 CDN, custom `lysoria` dark fantasy theme (Cinzel / EB Garamond). No build step. Views registered in `VIEWS` (`scenes`, `initiative`, `encounters`); Notes nav item is a placeholder.
+- `web/index.html` — single-file UI. Tailwind v4 browser CDN + daisyUI 5 CDN, custom `lysoria` dark fantasy theme (Cinzel / EB Garamond). No build step. Views registered in `VIEWS` (`scenes`, `initiative`, `encounters`, `notes`).
 - `foundry-module/` — Foundry module `dm-companion`, symlinked to `~/Library/Application Support/FoundryVTT/Data/modules/dm-companion`. `scripts/bridge.js` connects only when the user is GM, pushes scenes/combat on hooks (debounced), and runs `COMMANDS`.
 
 ## Environment
@@ -42,6 +42,7 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 - Scene browser (cards, folders, search), click to activate, favorites pinned at top (per world, `data/favorites.json`)
 - Initiative tracker: start/next/prev/end, roll NPCs/all, edit initiative, HP bar + damage/heal, hide, defeated, remove, custom entries (no token/actor)
 - Encounters: pick a session note from `~/Documents/Lysoria/Story/Act 1/Sessions` (`DMC_VAULT_DIR`), shows the `[[links]]` under its `Encounters` heading as collapsible cards (`GET /api/sessions`, `/api/encounters?session=`). Works without Foundry.
+- Session picker in the header, right of the Actions menu (shared by all views, saved in localStorage). Notes view renders the selected session note (`GET /api/note?session=`).
 - Actions menu: refresh from Foundry, add selected tokens to combat, pause/unpause, open Foundry
 
 Ideas backlog: `~/Documents/Lysoria/project_ideas.md`.

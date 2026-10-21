@@ -116,10 +116,13 @@
       <span class="status status-error"></span><span>Foundry</span>
     </span>
   </div>
-  <label id="search-box" class="input ml-auto w-full sm:w-80">
-    <svg class="h-4 w-4 opacity-60" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-    <input id="search" type="search" placeholder="Search scenes…" autocomplete="off">
-  </label>
+  <div id="search-box" class="relative ml-auto w-full sm:w-80">
+    <label class="input w-full">
+      <svg class="h-4 w-4 opacity-60" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="search" type="search" placeholder="Search scenes…" autocomplete="off">
+    </label>
+    <ul id="search-results" class="absolute inset-x-0 top-full z-50 mt-1 hidden max-h-80 overflow-y-auto rounded-box border border-secondary/20 bg-base-100 p-1 shadow-lg"></ul>
+  </div>
 </header>
 
 <main id="view" class="p-4"></main>
@@ -366,8 +369,8 @@
     currentView = view;
     try { localStorage.setItem("dmc-view", view); } catch {}
     $("search").value = "";
-    if (view === "npcs") loadNpcs();
-    if (view === "players" || view === "initiative") loadPlayers();
+    if (view === "npcs" || view === "showcase") loadNpcs();
+    if (view === "players" || view === "initiative" || view === "showcase") loadPlayers();
     render();
   }
 
@@ -380,7 +383,7 @@
 
   const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes, clocks: renderClocks, showcase: renderShowcase };
   const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes", "clocks", "showcase"]);
-  const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…" }; // views that work without Foundry
+  const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…", showcase: "Find an NPC or player to add…" }; // views that work without Foundry
 
   function setStatus(id, on, label) {
     const badge = $(id);
@@ -398,6 +401,7 @@
     $("search-box").classList.toggle("hidden", !SEARCH_VIEWS[currentView]);
     $("search").placeholder = SEARCH_VIEWS[currentView] || "";
     renderSessionSelect();
+    renderSearchResults();
 
     // keep focus and typing in an input across re-renders
     const active = document.activeElement;
@@ -589,6 +593,45 @@
     wrap.append(list);
   }
 
+  // adds the matching Foundry actor's portrait to the showcase and shows it
+  async function showArtwork(name, character) {
+    const key = `art:${name}`;
+    state.pending.add(key);
+    render();
+    const reply = await sendCommand("findArtwork", { name, character });
+    state.pending.delete(key);
+    if (!reply.ok) {
+      toast(reply.error, true);
+      return render();
+    }
+    const { name: actorName, src } = reply.result;
+    const existing = state.showcase.find((i) => i.src === src);
+    saveShowcase(existing
+      ? state.showcase.map((i) => (i === existing ? { ...i, shown: true } : i))
+      : [...state.showcase, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: actorName, src, shown: true }]);
+    toast(`${actorName} added to the showcase`);
+  }
+
+  // adds every player character's portrait to the showcase and shows them
+  async function showPlayers() {
+    state.pending.add("showPlayers");
+    render();
+    const replies = await Promise.all(state.players.map((p) => sendCommand("findArtwork", { name: p.name, character: true })));
+    state.pending.delete("showPlayers");
+    let items = state.showcase;
+    const missing = [];
+    replies.forEach((reply, i) => {
+      if (!reply.ok) return missing.push(state.players[i].name);
+      const { name, src } = reply.result;
+      items = items.some((item) => item.src === src)
+        ? items.map((item) => (item.src === src ? { ...item, shown: true } : item))
+        : [...items, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, src, shown: true }];
+    });
+    saveShowcase(items);
+    if (missing.length) toast(`No artwork for ${missing.join(", ")}`, true);
+    else toast("Players added to the showcase");
+  }
+
   // adds the matching Foundry actor's portrait to the showcase, or removes it when already shown
   function artworkButton(name, character) {
     const key = `art:${name}`;
@@ -599,20 +642,7 @@
         saveShowcase(state.showcase.filter((i) => !shown.includes(i)));
         return toast(`${shown[0].name} removed from the showcase`);
       }
-      state.pending.add(key);
-      render();
-      const reply = await sendCommand("findArtwork", { name, character });
-      state.pending.delete(key);
-      if (!reply.ok) {
-        toast(reply.error, true);
-        return render();
-      }
-      const { name: actorName, src } = reply.result;
-      const existing = state.showcase.find((i) => i.src === src);
-      saveShowcase(existing
-        ? state.showcase.map((i) => (i === existing ? { ...i, shown: true } : i))
-        : [...state.showcase, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: actorName, src, shown: true }]);
-      toast(`${actorName} added to the showcase`);
+      showArtwork(name, character);
     }, {
       iconPath: ICONS.image,
       key,
@@ -991,8 +1021,8 @@
 
   // pick up edits made in Obsidian when coming back to the app
   window.addEventListener("focus", () => {
-    if (currentView === "npcs") loadNpcs();
-    if (currentView === "players") loadPlayers();
+    if (currentView === "npcs" || currentView === "showcase") loadNpcs();
+    if (currentView === "players" || currentView === "showcase") loadPlayers();
   });
 
   function inlineHtml(text) {
@@ -1269,6 +1299,11 @@
     }
     bar.append(view);
     const actions = el("div", "ml-auto flex flex-wrap gap-2");
+    actions.append(button("Show players", "btn-sm btn-outline btn-secondary", showPlayers, {
+      key: "showPlayers",
+      title: state.foundryConnected ? "Add every player character's artwork and show it" : "Connect Foundry to add artwork",
+      disabled: !state.foundryConnected || !state.players?.length,
+    }));
     actions.append(button("Show all", "btn-sm btn-outline btn-secondary", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: true }))), { disabled: shownCount === state.showcase.length }));
     actions.append(button("Hide all", "btn-sm btn-outline", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: false }))), { disabled: !shownCount }));
     actions.append(button("Clear", "btn-sm btn-ghost text-error", async () => {
@@ -1282,6 +1317,44 @@
     const grid = el("div", "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4");
     state.showcase.forEach((item, index) => grid.append(showcaseCard(item, index)));
     wrap.append(grid);
+  }
+
+  // on the Showcase page the header search lists players and NPCs; Enter or a click shows their artwork
+  let searchIndex = 0;
+
+  function showcaseMatches() {
+    const query = $("search").value.trim().toLowerCase();
+    if (currentView !== "showcase" || !query) return [];
+    return [
+      ...(state.players || []).map((p) => ({ name: p.name, detail: p.class, kind: "Player", character: true })),
+      ...(state.npcs || []).map((n) => ({ name: n.name, detail: (n.race || n.occupation || "").replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1"), kind: "NPC", character: false })),
+    ].filter((p) => [p.name, p.detail].some((v) => v?.toLowerCase().includes(query))).slice(0, 50);
+  }
+
+  function renderSearchResults() {
+    const list = $("search-results");
+    const matches = showcaseMatches();
+    list.replaceChildren();
+    list.classList.toggle("hidden", currentView !== "showcase" || !$("search").value.trim());
+    if (!matches.length) return list.append(el("li", "p-2 text-sm text-base-content/60", "No NPCs or players match."));
+    searchIndex = Math.min(searchIndex, matches.length - 1);
+    matches.forEach((p, i) => {
+      const row = el("li", `flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-base-200 ${i === searchIndex ? "bg-base-200" : ""}`);
+      row.append(el("span", `badge badge-sm ${p.character ? "badge-primary" : "badge-ghost"} badge-soft`, p.kind));
+      row.append(el("span", "font-display font-semibold tracking-wide text-secondary", p.name));
+      if (p.detail) row.append(el("span", "truncate text-sm text-base-content/60 capitalize", p.detail));
+      row.onclick = () => pickSearchResult(p);
+      list.append(row);
+    });
+    list.children[searchIndex]?.scrollIntoView({ block: "nearest" });
+  }
+
+  function pickSearchResult(p) {
+    $("search").value = "";
+    searchIndex = 0;
+    render();
+    if (!state.foundryConnected) return toast("Connect Foundry to add artwork", true);
+    showArtwork(p.name, p.character);
   }
 
   function showcaseCard(item, index) {
@@ -1432,12 +1505,25 @@
     toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 2500);
   }
 
-  $("search").addEventListener("input", render);
+  $("search").addEventListener("input", () => {
+    searchIndex = 0;
+    render();
+  });
+  $("search").addEventListener("keydown", (event) => {
+    const matches = showcaseMatches();
+    if (!matches.length) return;
+    if (event.key === "Enter") pickSearchResult(matches[searchIndex] || matches[0]);
+    else if (event.key === "ArrowDown") searchIndex = Math.min(searchIndex + 1, matches.length - 1);
+    else if (event.key === "ArrowUp") searchIndex = Math.max(searchIndex - 1, 0);
+    else return;
+    event.preventDefault();
+    renderSearchResults();
+  });
   try { currentView = localStorage.getItem("dmc-view") || "scenes"; } catch {}
   if (!VIEWS[currentView]) currentView = "scenes";
   loadSessions();
-  if (currentView === "npcs") loadNpcs();
-  if (currentView === "players" || currentView === "initiative") loadPlayers();
+  if (currentView === "npcs" || currentView === "showcase") loadNpcs();
+  if (currentView === "players" || currentView === "initiative" || currentView === "showcase") loadPlayers();
   connect();
   render();
 </script>

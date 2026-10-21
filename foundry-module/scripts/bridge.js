@@ -1,6 +1,7 @@
 // DM Companion Bridge
 // Runs in the GM's browser. Connects to the local DM Companion server,
 // sends world data to it, and runs commands it receives.
+// Progress clocks marked visible are saved in a world setting and drawn on every client.
 
 const MODULE_ID = "dm-companion";
 const RETRY_MAX_MS = 15000;
@@ -20,9 +21,17 @@ Hooks.once("init", () => {
     default: "ws://localhost:4000/ws/foundry",
     onChange: () => reconnect(),
   });
+  game.settings.register(MODULE_ID, "clocks", {
+    scope: "world",
+    config: false,
+    type: Array,
+    default: [],
+    onChange: () => renderClocks(),
+  });
 });
 
 Hooks.once("ready", () => {
+  renderClocks();
   if (!game.user.isGM) return;
   connect();
 
@@ -74,6 +83,7 @@ function connect() {
       return;
     }
     if (data.type === "command") handleCommand(data);
+    else if (data.type === "clocks") saveClocks(data.clocks);
   });
 
   socket.addEventListener("close", () => {
@@ -90,6 +100,78 @@ function reconnect() {
 
 function send(message) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+}
+
+// ------------------------------------------------------------------ clocks
+
+async function saveClocks(clocks) {
+  const visible = (clocks ?? []).filter((c) => c.visible !== false)
+    .map(({ id, name, segments, filled }) => ({ id, name, segments, filled }));
+  if (JSON.stringify(visible) === JSON.stringify(game.settings.get(MODULE_ID, "clocks"))) return;
+  await game.settings.set(MODULE_ID, "clocks", visible);
+}
+
+function clockSvg({ segments, filled }) {
+  const done = filled >= segments;
+  const point = (k) => {
+    const angle = (k / segments) * 2 * Math.PI - Math.PI / 2;
+    return `${(50 + 45 * Math.cos(angle)).toFixed(2)},${(50 + 45 * Math.sin(angle)).toFixed(2)}`;
+  };
+  let wedges = "";
+  for (let i = 0; i < segments; i++) {
+    const fill = i < filled ? (done ? "#b4532a" : "#c9a227") : "#2a2420";
+    wedges += `<path d="M50,50 L${point(i)} A45,45 0 0 1 ${point(i + 1)} Z" fill="${fill}" stroke="#110f0d" stroke-width="3"/>`;
+  }
+  return `<svg viewBox="0 0 100 100">${wedges}<circle cx="50" cy="50" r="45" fill="none" stroke="#c9a22788" stroke-width="2"/></svg>`;
+}
+
+function renderClocks() {
+  const clocks = game.settings.get(MODULE_ID, "clocks") ?? [];
+  let root = document.getElementById("dmc-clocks");
+  if (!clocks.length) return root?.remove();
+  if (!root) {
+    ensureClockStyles();
+    root = document.createElement("div");
+    root.id = "dmc-clocks";
+    document.body.append(root);
+  }
+  root.innerHTML = clocks.map((c) => `
+    <div class="dmc-clock${c.filled >= c.segments ? " done" : ""}">
+      ${clockSvg(c)}
+      <div class="dmc-clock-name"></div>
+      <div class="dmc-clock-count">${c.filled} / ${c.segments}</div>
+    </div>`).join("");
+  root.querySelectorAll(".dmc-clock-name").forEach((label, i) => (label.textContent = clocks[i].name));
+  placeClocks();
+}
+
+// top right, just left of the sidebar (which can be collapsed or resized)
+function placeClocks() {
+  const root = document.getElementById("dmc-clocks");
+  const sidebar = document.getElementById("sidebar");
+  if (!root) return;
+  const left = sidebar?.getBoundingClientRect().left;
+  root.style.right = `${left ? Math.max(12, window.innerWidth - left + 12) : 12}px`;
+}
+
+Hooks.on("collapseSidebar", () => setTimeout(placeClocks, 300)); // after the collapse animation
+window.addEventListener("resize", () => placeClocks());
+
+function ensureClockStyles() {
+  if (document.getElementById("dmc-clock-styles")) return;
+  const style = document.createElement("style");
+  style.id = "dmc-clock-styles";
+  style.textContent = `
+    #dmc-clocks { position: fixed; top: 12px; right: 12px; z-index: 70;
+      display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 50vw; pointer-events: none; }
+    .dmc-clock { width: 96px; padding: 8px 6px 6px; text-align: center; border-radius: 6px;
+      background: rgba(17, 15, 13, 0.85); border: 1px solid rgba(201, 162, 39, 0.4); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
+    .dmc-clock.done { border-color: #b4532a; }
+    .dmc-clock svg { width: 64px; height: 64px; display: block; margin: 0 auto 4px; }
+    .dmc-clock-name { color: #e8dcc4; font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
+    .dmc-clock-count { color: #c9a227; font-size: 11px; }
+  `;
+  document.head.append(style);
 }
 
 // ------------------------------------------------------------------ scenes

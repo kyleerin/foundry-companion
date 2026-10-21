@@ -89,7 +89,7 @@ class State:
             except (TypeError, ValueError):
                 continue
             valid.append({"id": c["id"][:40], "name": str(c.get("name") or "Clock")[:80],
-                          "segments": segments, "filled": filled})
+                          "segments": segments, "filled": filled, "visible": c.get("visible", True) is not False})
         self.clocks.data = valid
         self.clocks.save()
 
@@ -153,6 +153,7 @@ async def foundry_ws(request):
                 }
                 log.info("Foundry world: %s (v%s)", data.get("world"), data.get("version"))
                 await state.broadcast(state.snapshot())
+                await ws.send_str(json.dumps({"type": "clocks", "clocks": state.clocks.data}))
             elif kind == "scenes":
                 state.scenes = data.get("scenes", [])
                 await state.broadcast({"type": "scenes", "scenes": state.scenes})
@@ -206,6 +207,8 @@ async def ui_ws(request):
             elif data.get("type") == "setClocks":
                 state.set_clocks(data.get("clocks"))
                 await state.broadcast({"type": "clocks", "clocks": state.clocks.data})
+                if state.foundry is not None:
+                    await state.foundry.send_str(json.dumps({"type": "clocks", "clocks": state.clocks.data}))
     finally:
         state.ui_clients.discard(ws)
     return ws

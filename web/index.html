@@ -1027,7 +1027,7 @@
     if (!name) return;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     state.clockDraft.name = "";
-    saveClocks([...state.clocks, { id, name, segments: state.clockDraft.segments, filled: 0 }]);
+    saveClocks([...state.clocks, { id, name, segments: state.clockDraft.segments, filled: 0, visible: true }]);
   }
 
   async function deleteClock(clock) {
@@ -1112,12 +1112,16 @@
     const count = el("div", "flex items-center gap-2 text-sm text-base-content/70");
     count.append(el("span", "", `${c.filled} / ${c.segments}`));
     if (done) count.append(el("span", "badge badge-sm badge-accent", "Complete"));
+    if (c.visible === false) count.append(el("span", "badge badge-sm badge-ghost", "Hidden from players"));
     side.append(count);
 
     const buttons = el("div", "flex gap-1");
     buttons.append(button("", "btn-sm btn-outline btn-square", () => updateClock(c.id, { filled: c.filled - 1 }), { iconPath: '<path d="M5 12h14"/>', title: "Untick", disabled: c.filled <= 0 }));
     buttons.append(button("", "btn-sm btn-outline btn-secondary btn-square", () => updateClock(c.id, { filled: c.filled + 1 }), { iconPath: '<path d="M5 12h14"/><path d="M12 5v14"/>', title: "Tick", disabled: done }));
-    buttons.append(button("", "btn-sm btn-ghost btn-square ml-auto text-error", () => deleteClock(c), { iconPath: ICONS.close, title: "Delete clock" }));
+    const shown = c.visible !== false;
+    buttons.append(button("", "btn-sm btn-ghost btn-square ml-auto", () => updateClock(c.id, { visible: !shown }),
+      { iconPath: shown ? ICONS.eye : ICONS.eyeOff, title: shown ? "Shown in Foundry (click to hide)" : "Hidden from Foundry (click to show)" }));
+    buttons.append(button("", "btn-sm btn-ghost btn-square text-error", () => deleteClock(c), { iconPath: ICONS.close, title: "Delete clock" }));
     side.append(buttons);
     card.append(side);
     return card;

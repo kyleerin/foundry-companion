@@ -70,6 +70,9 @@
   .md code { background: var(--color-base-300); padding: 0 0.3em; border-radius: 0.2rem; }
   .wikilink { color: var(--color-primary); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--color-primary) 40%, transparent); text-underline-offset: 2px; }
   .wikilink:hover { text-decoration-color: currentColor; }
+  .showcase-link { display: inline-flex; vertical-align: -0.15em; margin-left: 0.2em; padding: 0.1em; border-radius: 0.25rem; color: var(--color-secondary); opacity: 0.6; cursor: pointer; }
+  .showcase-link:hover { opacity: 1; background: var(--color-base-300); }
+  .showcase-link svg { width: 0.95em; height: 0.95em; }
 </style>
 </head>
 <body class="min-h-screen bg-base-200">
@@ -1004,6 +1007,7 @@
 
     const body = el("article", "md rounded-box border border-secondary/20 bg-base-100 p-6 shadow-lg");
     body.innerHTML = markdownHtml(state.note);
+    addShowcaseLinks(body);
     wrap.append(body);
   }
 
@@ -1021,7 +1025,7 @@
 
   // pick up edits made in Obsidian when coming back to the app
   window.addEventListener("focus", () => {
-    if (currentView === "npcs" || currentView === "showcase") loadNpcs();
+    loadNpcs();
     if (currentView === "players" || currentView === "showcase") loadPlayers();
   });
 
@@ -1299,16 +1303,12 @@
     }
     bar.append(view);
     const actions = el("div", "ml-auto flex flex-wrap gap-2");
-    actions.append(button("Show players", "btn-sm btn-outline btn-secondary", showPlayers, {
-      key: "showPlayers",
-      title: state.foundryConnected ? "Add every player character's artwork and show it" : "Connect Foundry to add artwork",
-      disabled: !state.foundryConnected || !state.players?.length,
-    }));
     actions.append(button("Show all", "btn-sm btn-outline btn-secondary", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: true }))), { disabled: shownCount === state.showcase.length }));
     actions.append(button("Hide all", "btn-sm btn-outline", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: false }))), { disabled: !shownCount }));
     actions.append(button("Clear", "btn-sm btn-ghost text-error", () => saveShowcase([]), { disabled: !state.showcase.length }));
     bar.append(actions);
     wrap.append(bar);
+    wrap.append(showcasePartyPanel());
 
     if (!state.showcase.length) return wrap.append(emptyState("No artwork yet. Use the image button on a Players or NPCs card to add a portrait."));
 
@@ -1353,6 +1353,38 @@
     render();
     if (!state.foundryConnected) return toast("Connect Foundry to add artwork", true);
     showArtwork(p.name, p.character);
+  }
+
+  // quick show/hide for each player character's artwork
+  function showcasePartyPanel() {
+    const panel = el("div", "mb-4 flex flex-wrap items-center gap-2 rounded-box border border-secondary/20 bg-base-100 px-3 py-2 shadow");
+    panel.append(el("span", "mr-1 font-display text-xs uppercase tracking-[0.25em] text-secondary/70", "Party"));
+    if (state.players === null) {
+      panel.append(el("span", "loading loading-dots loading-sm"));
+      return panel;
+    }
+    if (!state.players.length) {
+      panel.append(el("span", "text-sm text-base-content/60", "No notes found in Players."));
+      return panel;
+    }
+    const shownFor = (p) => state.showcase.filter((i) => i.shown && sameName(i.name, p.name));
+    for (const p of state.players) {
+      const shown = shownFor(p);
+      panel.append(button(p.name, `btn-xs ${shown.length ? "btn-secondary" : "btn-outline btn-secondary"}`, () => {
+        if (shown.length) return saveShowcase(state.showcase.filter((i) => !shown.includes(i)));
+        showArtwork(p.name, true);
+      }, {
+        key: `art:${p.name}`,
+        disabled: !shown.length && !state.foundryConnected,
+        title: shown.length ? "Remove from the showcase" : state.foundryConnected ? "Show artwork" : "Connect Foundry to add artwork",
+      }));
+    }
+    panel.append(button("Show all", "btn-xs btn-primary ml-auto", showPlayers, {
+      key: "showPlayers",
+      disabled: !state.foundryConnected || state.players.every((p) => shownFor(p).length),
+      title: state.foundryConnected ? "Show every player character's artwork" : "Connect Foundry to add artwork",
+    }));
+    return panel;
   }
 
   function showcaseCard(item, index) {
@@ -1408,9 +1440,34 @@
 
     const body = el("div", "collapse-content md");
     body.innerHTML = markdownHtml(e.markdown);
+    addShowcaseLinks(body);
     card.append(body);
     return card;
   }
+
+  // an image icon after each [[link]] to an NPC note, to add their artwork to the showcase
+  function addShowcaseLinks(container) {
+    if (!state.npcs?.length) return;
+    const npcs = new Map(state.npcs.map((n) => [n.name.toLowerCase(), n.name]));
+    for (const link of container.querySelectorAll(".wikilink")) {
+      const name = npcs.get(link.dataset.target.split("/").pop().toLowerCase());
+      if (!name) continue;
+      const icon = el("span", "showcase-link");
+      icon.dataset.npc = name;
+      icon.title = `Add ${name} to the showcase`;
+      icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.image}</svg>`;
+      link.after(icon);
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    const icon = event.target.closest(".showcase-link");
+    if (!icon) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!state.foundryConnected) return toast("Connect Foundry to add artwork", true);
+    showArtwork(icon.dataset.npc, false);
+  }, true);
 
   // ----------------------------------------------------------------- drawer
 
@@ -1459,6 +1516,7 @@
     if (entry.note.missing) return body.append(emptyState("Note not found in the vault."));
     if (!entry.note.markdown) return body.append(emptyState("This note is empty."));
     body.innerHTML = markdownHtml(entry.note.markdown);
+    addShowcaseLinks(body);
 
     if (entry.heading) {
       const wanted = entry.heading.toLowerCase();
@@ -1520,7 +1578,7 @@
   try { currentView = localStorage.getItem("dmc-view") || "scenes"; } catch {}
   if (!VIEWS[currentView]) currentView = "scenes";
   loadSessions();
-  if (currentView === "npcs" || currentView === "showcase") loadNpcs();
+  loadNpcs(); // also marks NPC links in notes with a showcase icon
   if (currentView === "players" || currentView === "initiative" || currentView === "showcase") loadPlayers();
   connect();
   render();

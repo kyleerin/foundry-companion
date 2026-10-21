@@ -273,6 +273,16 @@ async def api_note(request):
     return web.json_response({"session": session, "markdown": text.strip()})
 
 
+async def api_vault_note(request):
+    target = request.query.get("target", "").strip()
+    path = resolve_note(target) if target else None
+    if not path:
+        raise web.HTTPNotFound(text=f"No note named {target}")
+    text = re.sub(r"\A---\n.*?\n---\n", "", path.read_text(encoding="utf-8"), flags=re.S)
+    return web.json_response({"target": target, "title": path.stem,
+                              "path": str(path.relative_to(VAULT_DIR)), "markdown": text.strip()})
+
+
 async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -286,6 +296,7 @@ def make_app():
     app.router.add_get("/api/sessions", api_sessions)
     app.router.add_get("/api/encounters", api_encounters)
     app.router.add_get("/api/note", api_note)
+    app.router.add_get("/api/vault-note", api_vault_note)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

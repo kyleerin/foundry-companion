@@ -43,6 +43,7 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 - Initiative tracker: start/next/prev/end, roll NPCs/all, edit initiative, HP bar + damage/heal, hide, defeated, remove, custom entries (no token/actor)
 - Encounters: pick a session note from `~/Documents/Lysoria/Story/Act 1/Sessions` (`DMC_VAULT_DIR`), shows the `[[links]]` under its `Encounters` heading as collapsible cards (`GET /api/sessions`, `/api/encounters?session=`). Works without Foundry.
 - Session picker in the header, right of the Actions menu (shared by all views, saved in localStorage). Notes view renders the selected session note (`GET /api/note?session=`).
+- `[[links]]` in rendered notes open the linked vault note in a right-side drawer (`GET /api/vault-note?target=`); links inside the drawer stack with a back button, `#Heading` links scroll to the heading, Esc closes.
 - Actions menu: refresh from Foundry, add selected tokens to combat, pause/unpause, open Foundry
 
 Ideas backlog: `~/Documents/Lysoria/project_ideas.md`.

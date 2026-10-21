@@ -68,7 +68,8 @@
   .md th, .md td { border: 1px solid color-mix(in oklab, var(--color-secondary) 20%, transparent); padding: 0.3em 0.6em; text-align: left; vertical-align: top; }
   .md th { background: var(--color-base-300); font-family: "Cinzel", Georgia, serif; font-size: 0.85em; }
   .md code { background: var(--color-base-300); padding: 0 0.3em; border-radius: 0.2rem; }
-  .md .wikilink { color: var(--color-primary); }
+  .wikilink { color: var(--color-primary); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--color-primary) 40%, transparent); text-underline-offset: 2px; }
+  .wikilink:hover { text-decoration-color: currentColor; }
 </style>
 </head>
 <body class="min-h-screen bg-base-200">
@@ -157,6 +158,22 @@
   </form>
 </dialog>
 
+<aside id="drawer" class="fixed inset-y-0 right-0 z-20 flex w-full max-w-xl translate-x-full flex-col border-l border-secondary/30 bg-base-100 shadow-2xl transition-transform duration-200" aria-hidden="true">
+  <div class="flex items-center gap-2 border-b border-secondary/20 p-3">
+    <button id="drawer-back" class="btn btn-sm btn-ghost btn-square" title="Back">
+      <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+    </button>
+    <div class="min-w-0 flex-1">
+      <h2 id="drawer-title" class="truncate font-display text-lg font-semibold tracking-wide text-secondary"></h2>
+      <div id="drawer-path" class="truncate text-xs text-base-content/50"></div>
+    </div>
+    <button id="drawer-close" class="btn btn-sm btn-ghost btn-square" title="Close (Esc)">
+      <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div id="drawer-body" class="md flex-1 overflow-y-auto p-5"></div>
+</aside>
+
 <div id="toast" class="toast toast-center toast-bottom hidden z-30">
   <div id="toast-alert" class="alert alert-success"><span id="toast-text"></span></div>
 </div>
@@ -174,6 +191,7 @@
     session: null, // selected session
     encounters: null, // encounters of the selected session; null while loading
     note: null, // markdown of the selected session note; null while loading
+    drawer: [], // stack of linked notes open in the drawer: {target, heading, note}
     openEncounters: new Set(), // expanded encounter names
   };
   const pendingRequests = new Map();
@@ -760,12 +778,17 @@
     return bar;
   }
 
-  // Obsidian wikilinks -> highlighted text; embeds are dropped
+  const escapeHtml = (text) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+  // Obsidian wikilinks -> links that open in the drawer; embeds are dropped
   function vaultMarkdown(text) {
     return text
       .replace(/!\[\[[^\]]*\]\]/g, "")
-      .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, alias) =>
-        `<span class="wikilink">${alias || target.split("#")[0].split("/").pop()}</span>`);
+      .replace(/\[\[([^\]|]+?)\\?(?:\|([^\]]+))?\]\]/g, (_, link, alias) => {
+        const [target, heading = ""] = link.split("#");
+        const label = alias || (target ? target.split("/").pop() : heading);
+        return `<a class="wikilink" data-target="${escapeHtml(target.trim())}" data-heading="${escapeHtml(heading.trim())}">${escapeHtml(label)}</a>`;
+      });
   }
 
   const markdownCache = new Map();
@@ -837,6 +860,70 @@
     card.append(body);
     return card;
   }
+
+  // ----------------------------------------------------------------- drawer
+
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest(".wikilink");
+    if (!link) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const inDrawer = $("drawer").contains(link);
+    const target = link.dataset.target || (inDrawer ? state.drawer.at(-1)?.note?.target : "");
+    if (target) openLink(target, link.dataset.heading, inDrawer);
+  }, true);
+
+  async function openLink(target, heading, push) {
+    if (!push) state.drawer = [];
+    const entry = { target, heading, note: null };
+    state.drawer.push(entry);
+    renderDrawer();
+    try {
+      entry.note = await getJson(`/api/vault-note?target=${encodeURIComponent(target)}`);
+    } catch (err) {
+      entry.note = { target, title: target, path: "", markdown: "", missing: true };
+    }
+    if (state.drawer.at(-1) === entry) renderDrawer();
+  }
+
+  function closeDrawer() {
+    state.drawer = [];
+    renderDrawer();
+  }
+
+  function renderDrawer() {
+    const entry = state.drawer.at(-1);
+    const drawer = $("drawer");
+    drawer.classList.toggle("translate-x-full", !entry);
+    drawer.setAttribute("aria-hidden", String(!entry));
+    if (!entry) return;
+
+    $("drawer-back").classList.toggle("invisible", state.drawer.length < 2);
+    $("drawer-title").textContent = entry.note?.title || entry.target;
+    $("drawer-path").textContent = entry.note?.path || "";
+    const body = $("drawer-body");
+    body.replaceChildren();
+    body.scrollTop = 0;
+    if (!entry.note) return body.append(emptyState("Loading…", true));
+    if (entry.note.missing) return body.append(emptyState("Note not found in the vault."));
+    if (!entry.note.markdown) return body.append(emptyState("This note is empty."));
+    body.innerHTML = markdownHtml(entry.note.markdown);
+
+    if (entry.heading) {
+      const wanted = entry.heading.toLowerCase();
+      const match = [...body.querySelectorAll("h1, h2, h3, h4, h5, h6")].find((h) => h.textContent.trim().toLowerCase() === wanted);
+      match?.scrollIntoView({ block: "start" });
+    }
+  }
+
+  $("drawer-close").onclick = closeDrawer;
+  $("drawer-back").onclick = () => {
+    state.drawer.pop();
+    renderDrawer();
+  };
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.drawer.length && !document.querySelector("dialog[open]")) closeDrawer();
+  });
 
   // ------------------------------------------------------------- utilities
 

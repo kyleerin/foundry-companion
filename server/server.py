@@ -25,6 +25,8 @@ ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
 VAULT_DIR = Path(os.environ.get("DMC_VAULT_DIR", Path.home() / "Documents" / "Lysoria"))
 SESSIONS_DIR = VAULT_DIR / "Story" / "Act 1" / "Sessions"
 NPCS_DIR = VAULT_DIR / "NPCs"
+PLAYERS_DIR = VAULT_DIR / "Players"
+PLAYER_DASHBOARD = "Player Dashboard"
 
 log = logging.getLogger("dm-companion")
 
@@ -310,6 +312,70 @@ async def api_npcs(_request):
     return web.json_response({"npcs": npcs})
 
 
+def player_dashboard():
+    """Player and class per character from the Player Dashboard note: "## Rob" then "**Dana - artificer**"."""
+    path = PLAYERS_DIR / f"{PLAYER_DASHBOARD}.md"
+    players, player = [], None
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            heading = re.match(r"^##\s+(.+?)\s*$", line)
+            if heading:
+                player = heading.group(1)
+                continue
+            bold = re.match(r"^\*\*(.+?)\*\*\s*$", line.strip())
+            if player and bold:
+                character, _, cls = bold.group(1).rpartition(" - ")
+                character = re.sub(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", r"\1", character)
+                players.append({"player": player, "character": character, "class": cls})
+                player = None
+    return players
+
+
+def parse_player(path, dashboard):
+    text = path.read_text(encoding="utf-8")
+    info = {"name": path.stem, "target": str(path.relative_to(VAULT_DIR).with_suffix(""))}
+    entry = next((d for d in dashboard if d["character"] and path.stem.lower().startswith(d["character"].lower())), None)
+    if entry:
+        info.update(player=entry["player"], **{"class": entry["class"]})
+    else:
+        # "# Rob - Dana", "## Chris" or "**Chase**" near the top of the note
+        for line in text.splitlines()[:30]:
+            match = re.match(r"^(?:#{1,2}\s+([A-Z]\w+)\s+-\s|##\s+([A-Z]\w+)\s*$|\*\*([A-Z]\w+)\*\*\s*$)", line.strip())
+            if match:
+                info["player"] = next(g for g in match.groups() if g)
+                cls = next((d["class"] for d in dashboard if d["player"] == info["player"]), None)
+                if cls:
+                    info["class"] = cls
+                break
+    role = re.search(r"^\|\s*\**Class\s*/\s*Role\**\s*\|\s*(.+?)\s*\|", text, re.M)
+    if role:
+        info["role"] = role.group(1)
+
+    # open checklist items under an "Active ..." heading
+    storylines, active = [], False
+    for line in text.splitlines():
+        heading = HEADING_RE.match(line)
+        if heading:
+            active = "active" in heading.group(2).lower()
+        elif active:
+            item = re.match(r"^\s*[-*]\s+\[ \]\s+(?:\*\*(.+?)\*\*|(.+))", line)
+            if item:
+                storylines.append((item.group(1) or item.group(2)).strip())
+    info["storylines"] = storylines
+    return info
+
+
+async def api_players(_request):
+    if not PLAYERS_DIR.is_dir():
+        return web.json_response({"players": [], "dashboard": None})
+    dashboard = player_dashboard()
+    paths = [p for p in PLAYERS_DIR.rglob("*.md") if p.stem != PLAYER_DASHBOARD]
+    players = sorted((parse_player(p, dashboard) for p in paths), key=lambda n: natural_key(n["name"]))
+    has_dashboard = (PLAYERS_DIR / f"{PLAYER_DASHBOARD}.md").is_file()
+    return web.json_response({"players": players,
+                              "dashboard": f"{PLAYERS_DIR.name}/{PLAYER_DASHBOARD}" if has_dashboard else None})
+
+
 async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -325,6 +391,7 @@ def make_app():
     app.router.add_get("/api/note", api_note)
     app.router.add_get("/api/vault-note", api_vault_note)
     app.router.add_get("/api/npcs", api_npcs)
+    app.router.add_get("/api/players", api_players)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

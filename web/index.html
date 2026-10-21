@@ -81,6 +81,7 @@
       <li><a data-view="scenes">Scenes</a></li>
       <li><a data-view="initiative">Initiative</a></li>
       <li><a data-view="encounters">Encounters</a></li>
+      <li><a data-view="players">Players</a></li>
       <li><a data-view="npcs">NPCs</a></li>
       <li><a data-view="notes">Notes</a></li>
     </ul>
@@ -193,6 +194,8 @@
     encounters: null, // encounters of the selected session; null while loading
     note: null, // markdown of the selected session note; null while loading
     npcs: null, // NPC notes from the vault; null until loaded
+    players: null, // player character notes from the vault; null until loaded
+    playerDashboard: null, // vault target of the Player Dashboard note
     drawer: [], // stack of linked notes open in the drawer: {target, heading, note}
     openEncounters: new Set(), // expanded encounter names
   };
@@ -338,6 +341,7 @@
     try { localStorage.setItem("dmc-view", view); } catch {}
     $("search").value = "";
     if (view === "npcs") loadNpcs();
+    if (view === "players") loadPlayers();
     render();
   }
 
@@ -348,8 +352,8 @@
 
   // ----------------------------------------------------------------- render
 
-  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, npcs: renderNpcs, notes: renderNotes };
-  const OFFLINE_VIEWS = new Set(["encounters", "npcs", "notes"]);
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes };
+  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes"]);
   const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…" }; // views that work without Foundry
 
   function setStatus(id, on, label) {
@@ -847,7 +851,10 @@
   }
 
   // pick up edits made in Obsidian when coming back to the app
-  window.addEventListener("focus", () => { if (currentView === "npcs") loadNpcs(); });
+  window.addEventListener("focus", () => {
+    if (currentView === "npcs") loadNpcs();
+    if (currentView === "players") loadPlayers();
+  });
 
   function inlineHtml(text) {
     return marked.parseInline(vaultMarkdown(text));
@@ -895,6 +902,65 @@
       const line = el("div", "text-sm text-base-content/60 line-clamp-2");
       line.innerHTML = inlineHtml(n.summary);
       card.append(line);
+    }
+    return card;
+  }
+
+  // ---------------------------------------------------------------- players
+
+  async function loadPlayers() {
+    try {
+      const data = await getJson("/api/players");
+      state.players = data.players;
+      state.playerDashboard = data.dashboard;
+    } catch (err) {
+      state.players ??= [];
+      toast(`Couldn't load players: ${err.message}`, true);
+    }
+    render();
+  }
+
+  function renderPlayers(root) {
+    if (state.players === null) return root.append(emptyState("Loading…", true));
+    if (!state.players.length) return root.append(emptyState("No notes found in Players."));
+
+    if (state.playerDashboard) {
+      const bar = el("div", "mb-4 flex");
+      bar.append(button("Player Dashboard", "btn-sm btn-outline btn-secondary font-display tracking-wide",
+        () => openLink(state.playerDashboard, "", false)));
+      root.append(bar);
+    }
+    const grid = el("div", "grid gap-3 sm:grid-cols-2 xl:grid-cols-3");
+    state.players.forEach((p) => grid.append(playerCard(p)));
+    root.append(grid);
+  }
+
+  function playerCard(p) {
+    const card = el("div", "flex cursor-pointer flex-col gap-2 rounded-box border border-secondary/20 bg-base-100 p-4 shadow transition hover:border-secondary/60 hover:shadow-lg");
+    card.onclick = () => openLink(p.target, "", false);
+
+    const head = el("div", "flex flex-wrap items-baseline gap-x-3 gap-y-1");
+    head.append(el("div", "font-display text-lg font-semibold tracking-wide text-secondary", p.name));
+    if (p.class) head.append(el("span", "badge badge-sm badge-primary badge-soft capitalize", p.class));
+    card.append(head);
+    if (p.player) card.append(el("div", "-mt-1 text-sm text-base-content/60", `Played by ${p.player}`));
+    if (p.role) {
+      const role = el("div", "text-sm text-base-content/80 line-clamp-2");
+      role.innerHTML = inlineHtml(p.role);
+      card.append(role);
+    }
+
+    if (p.storylines.length) {
+      const section = el("div", "mt-1 border-t border-secondary/15 pt-2");
+      section.append(el("div", "font-display text-xs uppercase tracking-[0.2em] text-secondary/70", "Open storylines"));
+      const list = el("ul", "mt-1 list-disc pl-5 text-sm text-base-content/80");
+      p.storylines.forEach((title) => {
+        const item = el("li");
+        item.innerHTML = inlineHtml(title);
+        list.append(item);
+      });
+      section.append(list);
+      card.append(section);
     }
     return card;
   }
@@ -1029,6 +1095,7 @@
   if (!VIEWS[currentView]) currentView = "scenes";
   loadSessions();
   if (currentView === "npcs") loadNpcs();
+  if (currentView === "players") loadPlayers();
   connect();
   render();
 </script>

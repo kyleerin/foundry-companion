@@ -40,12 +40,12 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 
 ## Features
 - Scene browser (cards, folders, search), click to activate, favorites pinned at top (per world, `data/favorites.json`)
-- Initiative tracker: start/next/prev/end, roll NPCs/all, edit initiative, HP bar + damage/heal, hide, defeated, remove, custom entries (no token/actor)
+- Initiative tracker: start/next/prev/end, roll NPCs/all, edit initiative, HP bar + damage/heal, hide, defeated, remove, custom entries (no token/actor); Party quick-add panel (players from `Players/`, add one or all, greyed once in combat)
 - Encounters: pick a session note from `~/Documents/Lysoria/Story/Act 1/Sessions` (`DMC_VAULT_DIR`), shows the `[[links]]` under its `Encounters` heading as collapsible cards (`GET /api/sessions`, `/api/encounters?session=`). Works without Foundry.
 - Session picker in the header, right of the Actions menu (shared by all views, saved in localStorage). Notes view renders the selected session note (`GET /api/note?session=`).
 - `[[links]]` in rendered notes open the linked vault note in a right-side drawer (`GET /api/vault-note?target=`); links inside the drawer stack with a back button, `#Heading` links scroll to the heading, Esc closes.
 - Players: a card per note under `Players/` with player name and class (from the `Player Dashboard` note, else a `# Rob - Dana` / `## Chris` / `**Chase**` line), Class/Role and open `- [ ]` items under "Active" headings; Player Dashboard button; click opens the drawer (`GET /api/players`). Re-reads on view open and window focus.
-- NPCs: searchable cards for every note under `NPCs/` (race, occupation, faction, location or a summary line), click opens the note in the drawer (`GET /api/npcs`); swords button adds the NPC to initiative (`combatAddNpc`: links a world actor with the same name, else a plain entry). Re-reads the vault when the view opens or the window regains focus.
+- NPCs: searchable cards for every note under `NPCs/` (race, occupation, faction, location or a summary line), click opens the note in the drawer (`GET /api/npcs`); swords button adds the NPC to initiative (`combatAddByName`: uses the world actor with that name, its token on the current scene if placed, else a plain entry). Re-reads the vault when the view opens or the window regains focus.
 - Actions menu: refresh from Foundry, add selected tokens to combat, pause/unpause, open Foundry
 
 Ideas backlog: `~/Documents/Lysoria/project_ideas.md`.

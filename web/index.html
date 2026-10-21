@@ -341,7 +341,7 @@
     try { localStorage.setItem("dmc-view", view); } catch {}
     $("search").value = "";
     if (view === "npcs") loadNpcs();
-    if (view === "players") loadPlayers();
+    if (view === "players" || view === "initiative") loadPlayers();
     render();
   }
 
@@ -529,6 +529,7 @@
       buttons.append(button("Add selected tokens", "btn-primary", ACTIONS.addSelectedTokens, { key: "addSelectedTokens" }));
       buttons.append(button("Add custom entry", "btn-outline btn-secondary", openEntryDialog));
       empty.append(buttons);
+      wrap.append(partyPanel(null));
       return wrap.append(empty);
     }
 
@@ -553,12 +554,50 @@
     controls.append(button("End", "btn-sm btn-ghost text-error", endCombat, { title: "End combat" }));
     bar.append(controls);
     wrap.append(bar);
+    wrap.append(partyPanel(combat));
 
     if (!combat.combatants.length) return wrap.append(emptyState("No combatants yet. Select tokens in Foundry and use Actions → Add selected tokens."));
 
     const list = el("ol", "flex flex-col gap-2");
     combat.combatants.forEach((c) => list.append(combatantRow(c, combat)));
     wrap.append(list);
+  }
+
+  function addToInitiative(name, key, character = false) {
+    return run("combatAddByName", { name, character }, { key, success: (r) => `Added ${r.name} to initiative${r.linked ? "" : " (no Foundry actor found)"}` });
+  }
+
+  // same rule as the Foundry bridge: "Dana" matches "Dana Bumbleboots", "K" doesn't match "Kibber"
+  function sameName(a, b) {
+    [a, b] = [a.toLowerCase().trim(), b.toLowerCase().trim()];
+    return a === b || /^[ ,(]/.test(a.slice(b.length)) && a.startsWith(b) || /^[ ,(]/.test(b.slice(a.length)) && b.startsWith(a);
+  }
+
+  // quick add for the party: one button per player character, greyed out once in combat
+  function partyPanel(combat) {
+    const panel = el("div", "mb-4 flex flex-wrap items-center gap-2 rounded-box border border-secondary/20 bg-base-100 px-3 py-2 shadow");
+    panel.append(el("span", "mr-1 font-display text-xs uppercase tracking-[0.25em] text-secondary/70", "Party"));
+    if (state.players === null) {
+      panel.append(el("span", "loading loading-dots loading-sm"));
+      return panel;
+    }
+    if (!state.players.length) {
+      panel.append(el("span", "text-sm text-base-content/60", "No notes found in Players."));
+      return panel;
+    }
+
+    const joined = (p) => (combat?.combatants || []).some((c) => sameName(c.name, p.name));
+    const missing = state.players.filter((p) => !joined(p));
+    for (const p of state.players) {
+      const key = `player:${p.target}`;
+      const inCombat = joined(p);
+      panel.append(button(p.name, `btn-xs ${inCombat ? "btn-ghost" : "btn-outline btn-secondary"}`, () => addToInitiative(p.name, key, true),
+        { key, disabled: inCombat, title: inCombat ? "Already in initiative" : "Add to initiative" }));
+    }
+    panel.append(button("Add all", "btn-xs btn-primary ml-auto", async () => {
+      for (const p of missing) await addToInitiative(p.name, `player:${p.target}`, true);
+    }, { disabled: !missing.length, title: "Add every party member not yet in initiative" }));
+    return panel;
   }
 
   async function removeCombatant(c) {
@@ -879,7 +918,7 @@
     const key = `npc:${n.target}`;
     const add = button("", "btn-xs btn-ghost btn-square -mr-1 -mt-1", (event) => {
       event.stopPropagation();
-      run("combatAddNpc", { name: n.name }, { key, success: (r) => `Added ${r.name} to initiative${r.linked ? "" : " (no Foundry actor found)"}` });
+      addToInitiative(n.name, key);
     }, { iconPath: ICONS.swords, key, title: state.foundryConnected ? "Add to initiative" : "Connect Foundry to add to initiative", disabled: !state.foundryConnected });
     head.append(add);
     card.append(head);
@@ -1095,7 +1134,7 @@
   if (!VIEWS[currentView]) currentView = "scenes";
   loadSessions();
   if (currentView === "npcs") loadNpcs();
-  if (currentView === "players") loadPlayers();
+  if (currentView === "players" || currentView === "initiative") loadPlayers();
   connect();
   render();
 </script>

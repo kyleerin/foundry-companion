@@ -125,6 +125,12 @@ function sendScenes() {
 
 // ------------------------------------------------------------------ combat
 
+// "Linus" matches "Linus, the Hollow Legate" and "Dana" matches "Dana Bumbleboots", but "K" doesn't match "Kibber"
+function sameName(a, b) {
+  [a, b] = [a.toLowerCase().trim(), b.toLowerCase().trim()];
+  return a === b || /^[ ,(]/.test(a.slice(b.length)) && a.startsWith(b) || /^[ ,(]/.test(b.slice(a.length)) && b.startsWith(a);
+}
+
 function activeCombat() {
   return game.combats.active ?? game.combat ?? null;
 }
@@ -227,17 +233,23 @@ const COMMANDS = {
     return { name };
   },
 
-  // a vault NPC: linked to the world actor with that name when there is one, so HP and initiative rolls work
-  async combatAddNpc({ name }) {
+  // a vault NPC or player character by name: uses the world actor with that name when there is one
+  // (its token on the current scene if placed), so HP and initiative rolls work; else a plain entry
+  async combatAddByName({ name, character = false }) {
     if (!name) throw new Error("Name is required");
     const wanted = String(name).trim().toLowerCase();
-    const actor = game.actors.find((a) => a.name.toLowerCase() === wanted)
-      ?? game.actors.find((a) => a.name.toLowerCase().startsWith(wanted));
+    const actors = character ? [...game.actors.filter((a) => a.type === "character"), ...game.actors] : [...game.actors];
+    const actor = actors.find((a) => a.name.toLowerCase() === wanted) ?? actors.find((a) => sameName(a.name, wanted));
     let combat = activeCombat();
     if (!combat) combat = await Combat.implementation.create({ scene: canvas.scene?.id ?? null, active: true });
-    await combat.createEmbeddedDocuments("Combatant", [actor
-      ? { actorId: actor.id, name: actor.name, img: actor.img }
-      : { name: String(name).slice(0, 80), img: "icons/svg/mystery-man.svg" }]);
+    const inCombat = new Set(combat.combatants.map((c) => c.tokenId).filter(Boolean));
+    const token = actor && canvas.scene?.tokens.find((t) => t.actorId === actor.id && !inCombat.has(t.id));
+    await combat.createEmbeddedDocuments("Combatant", [token
+      ? { tokenId: token.id, sceneId: canvas.scene.id, actorId: actor.id, hidden: token.hidden }
+      : actor
+        ? { actorId: actor.id, name: actor.name, img: actor.img }
+        : { name: String(name).slice(0, 80), img: "icons/svg/mystery-man.svg" }]);
+    if (!combat.active) await combat.activate();
     return { name: actor?.name ?? name, linked: Boolean(actor) };
   },
 

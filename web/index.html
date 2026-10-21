@@ -1306,9 +1306,7 @@
     }));
     actions.append(button("Show all", "btn-sm btn-outline btn-secondary", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: true }))), { disabled: shownCount === state.showcase.length }));
     actions.append(button("Hide all", "btn-sm btn-outline", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: false }))), { disabled: !shownCount }));
-    actions.append(button("Clear", "btn-sm btn-ghost text-error", async () => {
-      if (await confirmDialog("Clear the showcase?", "This removes all artwork from the list.")) saveShowcase([]);
-    }, { disabled: !state.showcase.length }));
+    actions.append(button("Clear", "btn-sm btn-ghost text-error", () => saveShowcase([]), { disabled: !state.showcase.length }));
     bar.append(actions);
     wrap.append(bar);
 

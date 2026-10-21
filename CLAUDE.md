@@ -12,7 +12,7 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 ```
 
 - `server/server.py` — Python 3.9 + aiohttp (in `.venv`). Serves `web/`, relays messages, keeps last scenes/combat state, stores per-world data in `data/` (gitignored). Localhost origins only.
-- `web/index.html` — single-file UI. Tailwind v4 browser CDN + daisyUI 5 CDN, custom `lysoria` dark fantasy theme (Cinzel / EB Garamond). No build step. Views registered in `VIEWS` (`scenes`, `initiative`, `encounters`, `players`, `npcs`, `notes`).
+- `web/index.html` — single-file UI. Tailwind v4 browser CDN + daisyUI 5 CDN, custom `lysoria` dark fantasy theme (Cinzel / EB Garamond). No build step. Views registered in `VIEWS` (`scenes`, `initiative`, `encounters`, `players`, `npcs`, `notes`, `clocks`).
 - `foundry-module/` — Foundry module `dm-companion`, symlinked to `~/Library/Application Support/FoundryVTT/Data/modules/dm-companion`. `scripts/bridge.js` connects only when the user is GM, pushes scenes/combat on hooks (debounced), and runs `COMMANDS`.
 
 ## Environment
@@ -21,9 +21,9 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 - No node or pdftotext installed
 
 ## Protocol
-- UI → server: `{type:"command", requestId, command, args}` (relayed to Foundry), `{type:"toggleFavorite", sceneId}`
+- UI → server: `{type:"command", requestId, command, args}` (relayed to Foundry), `{type:"toggleFavorite", sceneId}`, `{type:"setClocks", clocks}`
 - Foundry → server: `hello` (world, worldId, user, origin, version), `scenes`, `combat`, `result`
-- Server → UI: `state` snapshot on connect/changes, `scenes`, `combat`, `favorites`, `result`
+- Server → UI: `state` snapshot on connect/changes, `scenes`, `combat`, `favorites`, `result`, `clocks`
 - UI `run(command, args, {key, success})` tracks pending state and shows toasts
 
 ## Adding a feature
@@ -46,6 +46,7 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 - `[[links]]` in rendered notes open the linked vault note in a right-side drawer (`GET /api/vault-note?target=`); links inside the drawer stack with a back button, `#Heading` links scroll to the heading, Esc closes.
 - Players: a card per note under `Players/` with player name and class (from the `Player Dashboard` note, else a `# Rob - Dana` / `## Chris` / `**Chase**` line), Class/Role and open `- [ ]` items under "Active" headings; Player Dashboard button; click opens the drawer (`GET /api/players`). Re-reads on view open and window focus.
 - NPCs: searchable cards for every note under `NPCs/` (race, occupation, faction, location or a summary line), click opens the note in the drawer (`GET /api/npcs`); swords button adds the NPC to initiative (`combatAddByName`: uses the world actor with that name, its token on the current scene if placed, else a plain entry). Re-reads the vault when the view opens or the window regains focus.
+- Clocks: progress clocks (4/6/8/12 segments), click a segment or +/- to tick, rename inline, delete. Stored in `data/clocks.json` (shared across worlds, works without Foundry); UI sends `{type:"setClocks", clocks}`, server validates and broadcasts `clocks`.
 - Actions menu: refresh from Foundry, add selected tokens to combat, pause/unpause, open Foundry
 
 Ideas backlog: `~/Documents/Lysoria/project_ideas.md`.

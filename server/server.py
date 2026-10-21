@@ -56,6 +56,7 @@ class State:
         self.scenes = []  # last scene list sent by Foundry
         self.combat = None  # last combat state sent by Foundry
         self.favorites = JsonStore(DATA_DIR / "favorites.json", {})  # world key -> [scene ids]
+        self.clocks = JsonStore(DATA_DIR / "clocks.json", [])  # progress clocks, shared across worlds
 
     def world_key(self):
         return self.foundry_info.get("worldId") or self.foundry_info.get("world")
@@ -75,6 +76,23 @@ class State:
             ids.append(scene_id)
         self.favorites.save()
 
+    def set_clocks(self, clocks):
+        if not isinstance(clocks, list):
+            return
+        valid = []
+        for c in clocks[:100]:
+            if not isinstance(c, dict) or not isinstance(c.get("id"), str):
+                continue
+            try:
+                segments = max(2, min(12, int(c.get("segments", 4))))
+                filled = max(0, min(segments, int(c.get("filled", 0))))
+            except (TypeError, ValueError):
+                continue
+            valid.append({"id": c["id"][:40], "name": str(c.get("name") or "Clock")[:80],
+                          "segments": segments, "filled": filled})
+        self.clocks.data = valid
+        self.clocks.save()
+
     def snapshot(self):
         return {
             "type": "state",
@@ -83,6 +101,7 @@ class State:
             "scenes": self.scenes,
             "combat": self.combat,
             "favorites": self.world_favorites(),
+            "clocks": self.clocks.data,
         }
 
     async def broadcast(self, message):
@@ -184,6 +203,9 @@ async def ui_ws(request):
             elif data.get("type") == "toggleFavorite":
                 state.toggle_favorite(data.get("sceneId"))
                 await state.broadcast({"type": "favorites", "favorites": state.world_favorites()})
+            elif data.get("type") == "setClocks":
+                state.set_clocks(data.get("clocks"))
+                await state.broadcast({"type": "clocks", "clocks": state.clocks.data})
     finally:
         state.ui_clients.discard(ws)
     return ws

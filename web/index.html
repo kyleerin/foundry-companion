@@ -84,6 +84,7 @@
       <li><a data-view="players">Players</a></li>
       <li><a data-view="npcs">NPCs</a></li>
       <li><a data-view="notes">Notes</a></li>
+      <li><a data-view="clocks">Clocks</a></li>
     </ul>
   </nav>
 
@@ -196,6 +197,8 @@
     npcs: null, // NPC notes from the vault; null until loaded
     players: null, // player character notes from the vault; null until loaded
     playerDashboard: null, // vault target of the Player Dashboard note
+    clocks: [], // progress clocks: {id, name, segments, filled}
+    clockDraft: { name: "", segments: 4 }, // the new clock form
     drawer: [], // stack of linked notes open in the drawer: {target, heading, note}
     openEncounters: new Set(), // expanded encounter names
   };
@@ -268,6 +271,9 @@
       state.scenes = msg.scenes || [];
       state.combat = msg.combat || null;
       state.favorites = msg.favorites || [];
+      state.clocks = msg.clocks || [];
+    } else if (msg.type === "clocks") {
+      state.clocks = msg.clocks;
     } else if (msg.type === "favorites") {
       state.favorites = msg.favorites;
     } else if (msg.type === "scenes") {
@@ -352,8 +358,8 @@
 
   // ----------------------------------------------------------------- render
 
-  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes };
-  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes"]);
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes, clocks: renderClocks };
+  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes", "clocks"]);
   const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…" }; // views that work without Foundry
 
   function setStatus(id, on, label) {
@@ -1001,6 +1007,119 @@
       section.append(list);
       card.append(section);
     }
+    return card;
+  }
+
+  // ----------------------------------------------------------------- clocks
+
+  function saveClocks(clocks) {
+    state.clocks = clocks;
+    socket?.send(JSON.stringify({ type: "setClocks", clocks }));
+    render();
+  }
+
+  function updateClock(id, changes) {
+    saveClocks(state.clocks.map((c) => (c.id === id ? { ...c, ...changes } : c)));
+  }
+
+  function addClock() {
+    const name = state.clockDraft.name.trim();
+    if (!name) return;
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    state.clockDraft.name = "";
+    saveClocks([...state.clocks, { id, name, segments: state.clockDraft.segments, filled: 0 }]);
+  }
+
+  async function deleteClock(clock) {
+    if (await confirmDialog(`Delete "${clock.name}"?`, "This removes the clock.")) {
+      saveClocks(state.clocks.filter((c) => c.id !== clock.id));
+    }
+  }
+
+  function renderClocks(root) {
+    const wrap = el("div", "mx-auto max-w-5xl");
+    root.append(wrap);
+
+    // new clock form
+    const form = el("form", "mb-4 flex flex-wrap items-center gap-3 rounded-box border border-secondary/20 bg-base-100 p-3 shadow-lg");
+    form.onsubmit = (event) => { event.preventDefault(); addClock(); };
+    const name = el("input", "input input-sm w-full sm:w-72");
+    name.placeholder = "New clock, e.g. Guards arrive";
+    name.maxLength = 80;
+    name.value = state.clockDraft.name;
+    name.dataset.key = "clock-new";
+    name.oninput = () => (state.clockDraft.name = name.value);
+    form.append(name);
+    const sizes = el("div", "join");
+    for (const n of [4, 6, 8, 12]) {
+      const size = el("button", `btn btn-sm join-item ${state.clockDraft.segments === n ? "btn-secondary" : "btn-outline btn-secondary"}`, String(n));
+      size.type = "button";
+      size.title = `${n} segments`;
+      size.onclick = () => { state.clockDraft.segments = n; render(); };
+      sizes.append(size);
+    }
+    form.append(sizes);
+    const add = el("button", "btn btn-sm btn-primary", "Add clock");
+    add.type = "submit";
+    form.append(add);
+    wrap.append(form);
+
+    if (!state.clocks.length) return wrap.append(emptyState("No clocks yet. Add one for a countdown like a ritual completing or guards arriving."));
+
+    const grid = el("div", "grid gap-3 sm:grid-cols-2 lg:grid-cols-3");
+    state.clocks.forEach((c) => grid.append(clockCard(c)));
+    wrap.append(grid);
+  }
+
+  function clockFace(c) {
+    const done = c.filled >= c.segments;
+    const wedges = [];
+    for (let i = 0; i < c.segments; i++) {
+      const point = (k) => {
+        const angle = (k / c.segments) * 2 * Math.PI - Math.PI / 2;
+        return `${(50 + 45 * Math.cos(angle)).toFixed(2)},${(50 + 45 * Math.sin(angle)).toFixed(2)}`;
+      };
+      const fill = i < c.filled ? (done ? "var(--color-accent)" : "var(--color-secondary)") : "var(--color-base-300)";
+      wedges.push(`<path data-seg="${i}" d="M50,50 L${point(i)} A45,45 0 0 1 ${point(i + 1)} Z" fill="${fill}" stroke="var(--color-base-100)" stroke-width="2" class="cursor-pointer transition-opacity hover:opacity-80"><title>Set to ${i + 1}</title></path>`);
+    }
+    const face = el("div", "w-32 shrink-0");
+    face.innerHTML = `<svg viewBox="0 0 100 100" class="h-32 w-32">${wedges.join("")}<circle cx="50" cy="50" r="45" fill="none" stroke="color-mix(in oklab, var(--color-secondary) 50%, transparent)" stroke-width="2"/></svg>`;
+    // clicking the last filled segment empties it, any other sets the clock to that segment
+    face.onclick = (event) => {
+      const seg = event.target.closest("[data-seg]");
+      if (!seg) return;
+      const i = Number(seg.dataset.seg);
+      updateClock(c.id, { filled: c.filled === i + 1 ? i : i + 1 });
+    };
+    return face;
+  }
+
+  function clockCard(c) {
+    const done = c.filled >= c.segments;
+    const card = el("div", `flex items-center gap-4 rounded-box border bg-base-100 p-4 shadow ${done ? "border-accent/70" : "border-secondary/20"}`);
+    card.append(clockFace(c));
+
+    const side = el("div", "flex min-w-0 flex-1 flex-col gap-2");
+    const name = el("input", "input input-ghost input-sm -ml-3 w-full font-display text-base font-semibold tracking-wide text-secondary");
+    name.value = c.name;
+    name.maxLength = 80;
+    name.title = "Rename";
+    name.dataset.key = `clock-${c.id}`;
+    name.onchange = () => name.value.trim() && updateClock(c.id, { name: name.value.trim() });
+    name.onkeydown = (e) => { if (e.key === "Enter") name.blur(); };
+    side.append(name);
+
+    const count = el("div", "flex items-center gap-2 text-sm text-base-content/70");
+    count.append(el("span", "", `${c.filled} / ${c.segments}`));
+    if (done) count.append(el("span", "badge badge-sm badge-accent", "Complete"));
+    side.append(count);
+
+    const buttons = el("div", "flex gap-1");
+    buttons.append(button("", "btn-sm btn-outline btn-square", () => updateClock(c.id, { filled: c.filled - 1 }), { iconPath: '<path d="M5 12h14"/>', title: "Untick", disabled: c.filled <= 0 }));
+    buttons.append(button("", "btn-sm btn-outline btn-secondary btn-square", () => updateClock(c.id, { filled: c.filled + 1 }), { iconPath: '<path d="M5 12h14"/><path d="M12 5v14"/>', title: "Tick", disabled: done }));
+    buttons.append(button("", "btn-sm btn-ghost btn-square ml-auto text-error", () => deleteClock(c), { iconPath: ICONS.close, title: "Delete clock" }));
+    side.append(buttons);
+    card.append(side);
     return card;
   }
 

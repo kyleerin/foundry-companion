@@ -32,7 +32,7 @@ Hooks.once("init", () => {
     scope: "world",
     config: false,
     type: Object,
-    default: { items: [], layout: "column" },
+    default: { items: [], layout: "column", view: "corner" },
     onChange: () => renderShowcase(),
   });
 });
@@ -155,19 +155,32 @@ function renderClocks() {
 // ---------------------------------------------------------------- showcase
 
 let showcaseCollapsed = false; // per client
+let showcaseView = null; // switching views reopens a collapsed showcase
 
 async function saveShowcase(showcase) {
   const items = (showcase?.items ?? []).filter((i) => i.shown !== false).map(({ id, name, src }) => ({ id, name, src }));
-  const value = { items, layout: showcase?.layout === "row" ? "row" : "column" };
+  const value = { items, layout: showcase?.layout === "row" ? "row" : "column", view: showcase?.view === "fullscreen" ? "fullscreen" : "corner" };
   if (JSON.stringify(value) === JSON.stringify(game.settings.get(MODULE_ID, "showcase"))) return;
   await game.settings.set(MODULE_ID, "showcase", value);
 }
 
-// every shown portrait at once, stacked in a column or lined up in a row
+// every shown portrait at once, stacked in a column or lined up in a row,
+// either in the top-right corner or filling the screen
 function renderShowcase() {
-  const { items = [], layout = "column" } = game.settings.get(MODULE_ID, "showcase") ?? {};
+  const { items = [], layout = "column", view = "corner" } = game.settings.get(MODULE_ID, "showcase") ?? {};
   let root = document.getElementById("dmc-showcase");
-  if (!items.length) return root?.remove();
+  const full = document.getElementById("dmc-showcase-full");
+  if (!items.length) {
+    full?.remove();
+    return root?.remove();
+  }
+  if (view !== showcaseView) showcaseCollapsed = false;
+  showcaseView = view;
+  if (view === "fullscreen" && !showcaseCollapsed) {
+    root?.remove();
+    return renderFullscreenShowcase(items, layout);
+  }
+  full?.remove();
   if (!root) {
     root = document.createElement("div");
     root.id = "dmc-showcase";
@@ -193,6 +206,30 @@ function renderShowcase() {
   });
   root.querySelector(".dmc-showcase-toggle").onclick = () => {
     showcaseCollapsed = !showcaseCollapsed;
+    renderShowcase();
+  };
+}
+
+function renderFullscreenShowcase(items, layout) {
+  ensureOverlayStyles();
+  let root = document.getElementById("dmc-showcase-full");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "dmc-showcase-full";
+    document.body.append(root);
+  }
+  root.className = layout;
+  root.innerHTML = `
+    <a class="dmc-showcase-close" title="Hide artwork"><i class="fa-solid fa-xmark"></i></a>
+    <div class="dmc-showcase-items">${items.map(() => `
+      <div class="dmc-showcase-item"><img alt=""><div class="dmc-showcase-name"></div></div>`).join("")}
+    </div>`;
+  root.querySelectorAll(".dmc-showcase-item").forEach((item, i) => {
+    item.querySelector(".dmc-showcase-name").textContent = items[i].name;
+    item.querySelector("img").src = items[i].src;
+  });
+  root.querySelector(".dmc-showcase-close").onclick = () => {
+    showcaseCollapsed = true;
     renderShowcase();
   };
 }
@@ -250,6 +287,15 @@ function ensureOverlayStyles() {
     #dmc-showcase.row .dmc-showcase-item img { height: 170px; max-width: 150px; }
     .dmc-showcase-name { color: #e8dcc4; font-size: 12px; text-align: center; padding-top: 3px;
       max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dmc-showcase-full { position: fixed; inset: 0; z-index: 1000; background: rgba(10, 9, 8, 0.96); padding: 40px 32px 24px; }
+    #dmc-showcase-full .dmc-showcase-close { position: absolute; top: 10px; right: 14px; color: #c9a227; font-size: 22px; cursor: pointer; }
+    #dmc-showcase-full .dmc-showcase-items { display: flex; gap: 20px; width: 100%; height: 100%; justify-content: center; }
+    #dmc-showcase-full.column .dmc-showcase-items { flex-direction: column; align-items: center; }
+    #dmc-showcase-full .dmc-showcase-item { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+      align-items: center; padding: 0; background: none; border: 0; box-shadow: none; }
+    #dmc-showcase-full .dmc-showcase-item img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; display: block; border: 0; }
+    #dmc-showcase-full .dmc-showcase-name { color: #e8dcc4; font-size: 22px; text-align: center; padding-top: 8px;
+      font-family: "Modesto Condensed", serif; letter-spacing: 0.05em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   `;
   document.head.append(style);
 }
@@ -291,6 +337,27 @@ function sendScenes() {
 function sameName(a, b) {
   [a, b] = [a.toLowerCase().trim(), b.toLowerCase().trim()];
   return a === b || /^[ ,(]/.test(a.slice(b.length)) && a.startsWith(b) || /^[ ,(]/.test(b.slice(a.length)) && b.startsWith(a);
+}
+
+// Foundry's mystery man, or the placeholder dnd5e gives each actor type (systems/dnd5e/icons/svg/actors/npc.svg)
+function isDefaultImage(src) {
+  return !src || src === CONST.DEFAULT_TOKEN || src === "icons/svg/mystery-man.svg"
+    || src.startsWith("systems/dnd5e/icons/svg/actors/");
+}
+
+// a data: URL from the web app, saved under the world's folder; returns its path
+async function uploadImage({ name, data }, actorName) {
+  const FP = foundry.applications?.apps?.FilePicker?.implementation ?? globalThis.FilePicker;
+  const dir = `worlds/${game.world.id}/dm-companion`;
+  try {
+    await FP.createDirectory("data", dir);
+  } catch {} // already exists
+  const ext = (name.match(/\.\w+$/)?.[0] ?? ".png").toLowerCase();
+  const fileName = `${actorName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}${ext}`;
+  const blob = await (await fetch(data)).blob();
+  const result = await FP.upload("data", dir, new File([blob], fileName, { type: blob.type }), {}, { notify: false });
+  if (!result?.path) throw new Error("Image upload failed");
+  return result.path;
 }
 
 // world actor by name, preferring player characters when `character` is set
@@ -424,10 +491,58 @@ const COMMANDS = {
   async findArtwork({ name, character = false }) {
     const actor = findActor(name, character);
     if (!actor) throw new Error(`No Foundry actor named ${name}`);
-    const fallback = CONST.DEFAULT_TOKEN ?? "icons/svg/mystery-man.svg";
-    const src = [actor.img, actor.prototypeToken?.texture?.src].find((img) => img && img !== fallback);
+    const src = [actor.img, actor.prototypeToken?.texture?.src].find((img) => !isDefaultImage(img));
     if (!src) throw new Error(`${actor.name} has no artwork`);
     return { name: actor.name, src };
+  },
+
+  // create or update a dnd5e NPC from a vault note: the note becomes the biography,
+  // and stat block fields found in it overwrite the actor's (others are left alone)
+  async syncNpc({ name, biography = "", stats = {}, image = null }) {
+    if (!name) throw new Error("Name is required");
+    const wanted = String(name).trim().toLowerCase();
+    const npcs = game.actors.filter((a) => a.type === "npc");
+    let actor = npcs.find((a) => a.name.toLowerCase() === wanted) ?? npcs.find((a) => sameName(a.name, wanted));
+
+    const data = { "system.details.biography.value": biography };
+    if (Number.isFinite(stats.ac)) Object.assign(data, { "system.attributes.ac.calc": "flat", "system.attributes.ac.flat": stats.ac });
+    if (Number.isFinite(stats.hp)) data["system.attributes.hp.max"] = stats.hp;
+    if (stats.hpFormula) data["system.attributes.hp.formula"] = stats.hpFormula;
+    if (Number.isFinite(stats.cr)) data["system.details.cr"] = stats.cr;
+    if (Number.isFinite(stats.speed)) data["system.attributes.movement.walk"] = stats.speed;
+    if (Number.isFinite(stats.fly)) data["system.attributes.movement.fly"] = stats.fly;
+    if (stats.size) data["system.traits.size"] = stats.size;
+    if (stats.type) data["system.details.type.value"] = stats.type;
+    if (stats.subtype) data["system.details.type.subtype"] = stats.subtype;
+    if (stats.alignment) data["system.details.alignment"] = stats.alignment;
+    for (const [ability, value] of Object.entries(stats.abilities ?? {})) data[`system.abilities.${ability}.value`] = value;
+
+    const fields = Object.keys(data).length - 1;
+    const created = !actor;
+    if (actor) {
+      await actor.update(data);
+    } else {
+      const folder = game.folders.find((f) => f.type === "Actor" && f.name === "NPCs")
+        ?? await Folder.implementation.create({ name: "NPCs", type: "Actor" });
+      if (Number.isFinite(stats.hp)) data["system.attributes.hp.value"] = stats.hp;
+      actor = await Actor.implementation.create({
+        name: String(name).slice(0, 80),
+        type: "npc",
+        folder: folder.id,
+        ...foundry.utils.expandObject(data),
+      });
+    }
+
+    // the note's image, only over Foundry's default art so hand-picked portraits stay
+    let imageSet = false;
+    if (image?.data && isDefaultImage(actor.img)) {
+      const src = await uploadImage(image, actor.name);
+      const update = { img: src };
+      if (isDefaultImage(actor.prototypeToken?.texture?.src)) update["prototypeToken.texture.src"] = src;
+      await actor.update(update);
+      imageSet = true;
+    }
+    return { name: actor.name, created, fields, imageSet };
   },
 
   async combatRemove({ combatantId }) {

@@ -203,6 +203,7 @@
     clockDraft: { name: "", segments: 4 }, // the new clock form
     showcase: [], // artwork shown in Foundry: {id, name, src, shown}
     showcaseLayout: "column", // how Foundry lays out the shown artwork: "column" or "row"
+    showcaseView: "corner", // where Foundry shows it: "corner" (top right) or "fullscreen"
     drawer: [], // stack of linked notes open in the drawer: {target, heading, note}
     openEncounters: new Set(), // expanded encounter names
   };
@@ -233,6 +234,7 @@
     skull: '<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v2h8v-2"/><path d="m12.5 17-.5-1-.5 1h1z"/><path d="M16 20a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20"/>',
     eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
     eyeOff: '<path d="m2 2 20 20"/><path d="M6.7 6.7C3.9 8.4 2 12 2 12s3 7 10 7c2 0 3.7-.5 5.2-1.3"/><path d="M10.6 5.1c.5-.1.9-.1 1.4-.1 7 0 10 7 10 7s-.6 1.4-1.9 3"/>',
+    sync: '<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/>',
     image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
     swords: '<path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/><path d="M14.5 6.5 18 3h3v3l-3.5 3.5"/><path d="m5 14 4 4"/><path d="m7 17-3 3"/><path d="m3 19 2 2"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
@@ -279,9 +281,11 @@
       state.clocks = msg.clocks || [];
       state.showcase = msg.showcase?.items || [];
       state.showcaseLayout = msg.showcase?.layout || "column";
+      state.showcaseView = msg.showcase?.view || "corner";
     } else if (msg.type === "showcase") {
       state.showcase = msg.showcase.items;
       state.showcaseLayout = msg.showcase.layout;
+      state.showcaseView = msg.showcase.view || "corner";
     } else if (msg.type === "clocks") {
       state.clocks = msg.clocks;
     } else if (msg.type === "favorites") {
@@ -615,6 +619,48 @@
       title: shown.length ? "Remove from the showcase" : state.foundryConnected ? "Add artwork to the showcase" : "Connect Foundry to add artwork",
       disabled: !shown.length && !state.foundryConnected,
     });
+  }
+
+  // creates the NPC in Foundry from its vault note, or updates it if it exists
+  function syncNpcButton(n) {
+    const key = `sync:${n.target}`;
+    return button("", "btn-xs btn-ghost btn-square -mt-1", async (event) => {
+      event.stopPropagation();
+      state.pending.add(key);
+      render();
+      try {
+        const note = await getJson(`/api/npc?target=${encodeURIComponent(n.target)}`);
+        const image = note.image ? { name: note.image.split("/").pop(), data: await imageDataUrl(note.image) } : null;
+        const reply = await sendCommand("syncNpc", { name: note.name, biography: biographyHtml(note.markdown), stats: note.stats, image });
+        if (!reply.ok) throw new Error(reply.error);
+        const { name, created, fields, imageSet } = reply.result;
+        const extras = [fields && `${fields} stat${fields === 1 ? "" : "s"}`, imageSet && "image"].filter(Boolean);
+        toast(`${created ? "Created" : "Updated"} ${name} in Foundry${extras.length ? ` (${extras.join(" + ")} from the note)` : ""}`);
+      } catch (err) {
+        toast(`Couldn't sync ${n.name}: ${err.message}`, true);
+      }
+      state.pending.delete(key);
+      render();
+    }, { iconPath: ICONS.sync, key, title: state.foundryConnected ? "Sync to Foundry (creates the NPC if missing)" : "Connect Foundry to sync", disabled: !state.foundryConnected });
+  }
+
+  async function imageDataUrl(path) {
+    const res = await fetch(`/api/vault-file?path=${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error(`image ${path} not found`);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // note markdown -> HTML for a Foundry biography; wikilinks become plain text since they don't resolve there
+  function biographyHtml(markdown) {
+    return marked.parse(markdown
+      .replace(/!\[\[[^\]]*\]\]/g, "")
+      .replace(/\[\[([^\]|]+?)\\?(?:\|([^\]]+))?\]\]/g, (_, link, alias) => alias || link.split("#")[0].split("/").pop() || link.split("#")[1] || ""));
   }
 
   function addToInitiative(name, key, character = false) {
@@ -974,7 +1020,7 @@
       event.stopPropagation();
       addToInitiative(n.name, key);
     }, { iconPath: ICONS.swords, key, title: state.foundryConnected ? "Add to initiative" : "Connect Foundry to add to initiative", disabled: !state.foundryConnected });
-    head.append(artworkButton(n.name, false), add);
+    head.append(syncNpcButton(n), artworkButton(n.name, false), add);
     card.append(head);
 
     const role = [n.race, n.occupation].filter(Boolean).join(" · ");
@@ -1180,10 +1226,11 @@
 
   // --------------------------------------------------------------- showcase
 
-  function saveShowcase(items, layout = state.showcaseLayout) {
+  function saveShowcase(items, layout = state.showcaseLayout, view = state.showcaseView) {
     state.showcase = items;
     state.showcaseLayout = layout;
-    socket?.send(JSON.stringify({ type: "setShowcase", showcase: { items, layout } }));
+    state.showcaseView = view;
+    socket?.send(JSON.stringify({ type: "setShowcase", showcase: { items, layout, view } }));
     render();
   }
 
@@ -1213,6 +1260,14 @@
       layout.append(option);
     }
     bar.append(layout);
+    const view = el("div", "join");
+    for (const [value, label] of [["corner", "Corner"], ["fullscreen", "Full screen"]]) {
+      const option = el("button", `btn btn-sm join-item ${state.showcaseView === value ? "btn-secondary" : "btn-outline btn-secondary"}`, label);
+      option.title = value === "corner" ? "Show the artwork in the top-right corner" : "Fill the whole screen with the artwork";
+      option.onclick = () => saveShowcase(state.showcase, state.showcaseLayout, value);
+      view.append(option);
+    }
+    bar.append(view);
     const actions = el("div", "ml-auto flex flex-wrap gap-2");
     actions.append(button("Show all", "btn-sm btn-outline btn-secondary", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: true }))), { disabled: shownCount === state.showcase.length }));
     actions.append(button("Hide all", "btn-sm btn-outline", () => saveShowcase(state.showcase.map((i) => ({ ...i, shown: false }))), { disabled: !shownCount }));

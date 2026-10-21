@@ -57,7 +57,7 @@ class State:
         self.combat = None  # last combat state sent by Foundry
         self.favorites = JsonStore(DATA_DIR / "favorites.json", {})  # world key -> [scene ids]
         self.clocks = JsonStore(DATA_DIR / "clocks.json", [])  # progress clocks, shared across worlds
-        # artwork shown in Foundry: {"items": [{id, name, src, shown}], "layout": "column" | "row"}
+        # artwork shown in Foundry: {"items": [{id, name, src, shown}], "layout": "column" | "row", "view": "corner" | "fullscreen"}
         self.showcase = JsonStore(DATA_DIR / "showcase.json", {"items": [], "layout": "column"})
         if isinstance(self.showcase.data, list):  # older files held just the items
             self.showcase.data = {"items": self.showcase.data, "layout": "column"}
@@ -106,7 +106,8 @@ class State:
             if isinstance(i, dict) and isinstance(i.get("id"), str) and isinstance(i.get("src"), str) and i["src"]
         ]
         layout = "row" if showcase.get("layout") == "row" else "column"
-        self.showcase.data = {"items": items, "layout": layout}
+        view = "fullscreen" if showcase.get("view") == "fullscreen" else "corner"
+        self.showcase.data = {"items": items, "layout": layout, "view": view}
         self.showcase.save()
 
     def snapshot(self):
@@ -195,7 +196,7 @@ async def ui_ws(request):
     if not origin_allowed(request):
         raise web.HTTPForbidden(text="Origin not allowed")
 
-    ws = web.WebSocketResponse(heartbeat=20)
+    ws = web.WebSocketResponse(heartbeat=20, max_msg_size=32 * 1024 * 1024)  # NPC images pass through
     await ws.prepare(request)
     state.ui_clients.add(ws)
     await ws.send_str(json.dumps(state.snapshot()))
@@ -355,6 +356,83 @@ def parse_npc(path):
     return {"name": path.stem, "target": target, **fields}
 
 
+SIZES = {"tiny": "tiny", "small": "sm", "medium": "med", "large": "lg", "huge": "huge", "gargantuan": "grg"}
+ABILITIES = ["str", "dex", "con", "int", "wis", "cha"]
+
+
+def parse_stats(text):
+    """Best-effort 5e stat block fields from a note; the first match of each wins."""
+    stats = {}
+    lines = [re.sub(r"[*_]", "", line).strip() for line in text.splitlines()]
+    for i, line in enumerate(lines):
+        if "ac" not in stats and (m := re.search(r"\b(?:AC|Armor Class)\s*:?\s*(\d+)", line)):
+            stats["ac"] = int(m.group(1))
+        if "hp" not in stats and (m := re.search(r"\b(?:HP|Hit Points)\s*:?\s*(\d+)(?:\s*\(([\dd+\- ]+)\))?", line)):
+            stats["hp"] = int(m.group(1))
+            if m.group(2):
+                stats["hpFormula"] = m.group(2).replace(" ", "")
+        if "cr" not in stats and (m := re.search(r"\b(?:CR|Challenge(?: Rating)?)\s*:?\s*(\d+(?:/\d+)?)\b", line)):
+            num, _, den = m.group(1).partition("/")
+            stats["cr"] = int(num) / int(den) if den else int(num)
+        if "speed" not in stats and (m := re.search(r"\bSpeed\s*:?\s*(\d+)\s*ft", line)):
+            stats["speed"] = int(m.group(1))
+            if fly := re.search(r"\bfly\s*(\d+)", line):
+                stats["fly"] = int(fly.group(1))
+        if "size" not in stats and (m := re.match(r"^(Tiny|Small|Medium|Large|Huge|Gargantuan)\s+([A-Za-z]+)(?:\s*\(([^)]*)\))?\s*,\s*(.+)$", line, re.I)):
+            stats["size"] = SIZES[m.group(1).lower()]
+            stats["type"] = m.group(2).lower()
+            if m.group(3):
+                stats["subtype"] = m.group(3)
+            stats["alignment"] = m.group(4).strip()
+        if "abilities" not in stats and re.match(r"^\|\s*STR\s*\|\s*DEX\s*\|", line, re.I):
+            for row in lines[i + 1:i + 3]:
+                scores = [int(m.group(1)) for m in re.finditer(r"\|\s*(\d+)", row)]
+                if len(scores) >= 6:
+                    stats["abilities"] = dict(zip(ABILITIES, scores[:6]))
+                    break
+    return stats
+
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"}
+IMAGE_EMBED_RE = re.compile(r"!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]|!\[[^\]]*\]\(([^)\s]+)\)")
+
+
+def resolve_file(target):
+    """A vault file by path, else by file name, the way Obsidian resolves embeds."""
+    direct = VAULT_DIR / target
+    if direct.is_file() and VAULT_DIR in direct.resolve().parents:
+        return direct
+    name = Path(target).name
+    return next((p for p in VAULT_DIR.rglob(name) if p.relative_to(VAULT_DIR).parts[0] not in ("books", ".obsidian", ".trash")), None)
+
+
+def first_image(text):
+    for m in IMAGE_EMBED_RE.finditer(text):
+        target = m.group(1) or m.group(2)
+        if re.match(r"^[a-z]+:", target) or Path(target).suffix.lower() not in IMAGE_EXTS:
+            continue  # URLs and attachments that aren't in the vault
+        path = resolve_file(target.strip())
+        if path:
+            return str(path.relative_to(VAULT_DIR))
+    return None
+
+
+async def api_vault_file(request):
+    path = resolve_file(request.query.get("path", ""))
+    if not path or path.suffix.lower() not in IMAGE_EXTS:
+        raise web.HTTPNotFound(text="No such image")
+    return web.FileResponse(path)
+
+
+async def api_npc(request):
+    target = request.query.get("target", "")
+    path = resolve_note(target) if target else None
+    if not path or NPCS_DIR not in path.parents:
+        raise web.HTTPNotFound(text=f"No NPC note named {target}")
+    text = re.sub(r"\A---\n.*?\n---\n", "", path.read_text(encoding="utf-8"), flags=re.S).strip()
+    return web.json_response({"name": path.stem, "markdown": text, "stats": parse_stats(text), "image": first_image(text)})
+
+
 async def api_npcs(_request):
     paths = NPCS_DIR.rglob("*.md") if NPCS_DIR.is_dir() else []
     npcs = sorted((parse_npc(p) for p in paths), key=lambda n: natural_key(n["name"]))
@@ -440,6 +518,8 @@ def make_app():
     app.router.add_get("/api/note", api_note)
     app.router.add_get("/api/vault-note", api_vault_note)
     app.router.add_get("/api/npcs", api_npcs)
+    app.router.add_get("/api/npc", api_npc)
+    app.router.add_get("/api/vault-file", api_vault_file)
     app.router.add_get("/api/players", api_players)
     app.router.add_static("/static/", WEB_DIR)
     return app

@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:wght@400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <style>
   /* Lysoria: dark fantasy theme (stone, parchment, void violet, ember gold) */
   [data-theme="lysoria"] {
@@ -51,6 +52,22 @@
   /* hide number input spinners */
   input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   input[type=number] { -moz-appearance: textfield; }
+  /* rendered vault markdown */
+  .md { line-height: 1.55; }
+  .md > * + * { margin-top: 0.75em; }
+  .md h2, .md h3, .md h4 { font-family: "Cinzel", Georgia, serif; color: var(--color-secondary); letter-spacing: 0.04em; margin-top: 1.4em; }
+  .md h2 { font-size: 1.1rem; border-bottom: 1px solid color-mix(in oklab, var(--color-secondary) 25%, transparent); padding-bottom: 0.2em; }
+  .md h3 { font-size: 1rem; }
+  .md ul { list-style: disc; padding-left: 1.4em; }
+  .md ol { list-style: decimal; padding-left: 1.4em; }
+  .md li + li { margin-top: 0.2em; }
+  .md strong { color: var(--color-base-content); font-weight: 600; }
+  .md blockquote { border-left: 3px solid var(--color-primary); background: color-mix(in oklab, var(--color-primary) 8%, transparent); padding: 0.5em 1em; font-style: italic; border-radius: 0 0.25rem 0.25rem 0; }
+  .md table { width: 100%; border-collapse: collapse; font-size: 0.95em; }
+  .md th, .md td { border: 1px solid color-mix(in oklab, var(--color-secondary) 20%, transparent); padding: 0.3em 0.6em; text-align: left; vertical-align: top; }
+  .md th { background: var(--color-base-300); font-family: "Cinzel", Georgia, serif; font-size: 0.85em; }
+  .md code { background: var(--color-base-300); padding: 0 0.3em; border-radius: 0.2rem; }
+  .md .wikilink { color: var(--color-primary); }
 </style>
 </head>
 <body class="min-h-screen bg-base-200">
@@ -61,7 +78,7 @@
     <ul id="nav" class="menu menu-horizontal menu-sm gap-1 p-0 font-display tracking-wide">
       <li><a data-view="scenes">Scenes</a></li>
       <li><a data-view="initiative">Initiative</a></li>
-      <li class="menu-disabled tooltip tooltip-bottom" data-tip="Coming soon"><a>Encounters</a></li>
+      <li><a data-view="encounters">Encounters</a></li>
       <li class="menu-disabled tooltip tooltip-bottom" data-tip="Coming soon"><a>Notes</a></li>
     </ul>
   </nav>
@@ -147,6 +164,10 @@
     combat: null,
     favorites: [], // starred scene ids, in the order they were starred
     pending: new Set(), // ids of things waiting on Foundry
+    sessions: null, // session note names from the vault
+    session: null, // selected session
+    encounters: null, // encounters of the selected session; null while loading
+    openEncounters: new Set(), // expanded encounter names
   };
   const pendingRequests = new Map();
   let socket;
@@ -283,6 +304,7 @@
   function setView(view) {
     currentView = view;
     try { localStorage.setItem("dmc-view", view); } catch {}
+    if (view === "encounters") loadSessions();
     render();
   }
 
@@ -293,7 +315,8 @@
 
   // ----------------------------------------------------------------- render
 
-  const VIEWS = { scenes: renderScenes, initiative: renderInitiative };
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters };
+  const OFFLINE_VIEWS = new Set(["encounters"]); // views that work without Foundry
 
   function setStatus(id, on, label) {
     const badge = $(id);
@@ -319,7 +342,7 @@
     const root = $("view");
     root.replaceChildren();
     if (!state.connected) root.append(emptyState("Can't reach the DM Companion server. Is it running?"));
-    else if (!state.foundryConnected) root.append(emptyState("Waiting for Foundry. Open your world as GM with the DM Companion Bridge module enabled.", true));
+    else if (!state.foundryConnected && !OFFLINE_VIEWS.has(currentView)) root.append(emptyState("Waiting for Foundry. Open your world as GM with the DM Companion Bridge module enabled.", true));
     else VIEWS[currentView](root);
 
     if (focusKey) {
@@ -665,6 +688,121 @@
     return block;
   }
 
+  // ------------------------------------------------------------- encounters
+
+  async function getJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async function loadSessions() {
+    try {
+      state.sessions = (await getJson("/api/sessions")).sessions;
+    } catch (err) {
+      state.sessions = [];
+      toast(`Couldn't list sessions: ${err.message}`, true);
+    }
+    let saved = null;
+    try { saved = localStorage.getItem("dmc-session"); } catch {}
+    const pick = [state.session, saved].find((s) => s && state.sessions.includes(s)) || state.sessions.at(-1);
+    if (pick) await loadEncounters(pick);
+    else render();
+  }
+
+  async function loadEncounters(session) {
+    if (session !== state.session) state.openEncounters.clear();
+    state.session = session;
+    state.encounters = null;
+    try { localStorage.setItem("dmc-session", session); } catch {}
+    render();
+    try {
+      const data = await getJson(`/api/encounters?session=${encodeURIComponent(session)}`);
+      if (state.session === session) state.encounters = data.encounters;
+    } catch (err) {
+      if (state.session === session) state.encounters = [];
+      toast(`Couldn't load ${session}: ${err.message}`, true);
+    }
+    render();
+  }
+
+  // Obsidian wikilinks -> highlighted text; embeds are dropped
+  function vaultMarkdown(text) {
+    return text
+      .replace(/!\[\[[^\]]*\]\]/g, "")
+      .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, alias) =>
+        `<span class="wikilink">${alias || target.split("#")[0].split("/").pop()}</span>`);
+  }
+
+  const markdownCache = new Map();
+  function markdownHtml(text) {
+    if (!markdownCache.has(text)) markdownCache.set(text, marked.parse(vaultMarkdown(text)));
+    return markdownCache.get(text);
+  }
+
+  function renderEncounters(root) {
+    const wrap = el("div", "mx-auto max-w-4xl");
+    root.append(wrap);
+
+    const bar = el("div", "mb-4 flex flex-wrap items-center gap-3 rounded-box border border-secondary/20 bg-base-100 p-3 shadow-lg");
+    bar.append(el("span", "font-display text-xs uppercase tracking-[0.25em] text-secondary/70", "Session"));
+    const select = el("select", "select select-sm w-56 font-display");
+    select.disabled = !state.sessions?.length;
+    for (const name of state.sessions || []) {
+      const option = el("option", "", name);
+      option.value = name;
+      option.selected = name === state.session;
+      select.append(option);
+    }
+    select.onchange = () => loadEncounters(select.value);
+    bar.append(select);
+    if (state.encounters?.length) {
+      bar.append(el("span", "ml-auto text-sm text-base-content/60",
+        `${state.encounters.length} encounter${state.encounters.length === 1 ? "" : "s"}`));
+    }
+    wrap.append(bar);
+
+    if (state.sessions === null || (state.session && state.encounters === null)) return wrap.append(emptyState("Loading…", true));
+    if (!state.sessions.length) return wrap.append(emptyState("No session notes found in Story/Act 1/Sessions."));
+    if (!state.encounters.length) return wrap.append(emptyState(`${state.session} has no encounters listed. Add [[links]] under an "Encounters" heading.`));
+
+    const list = el("div", "flex flex-col gap-3");
+    state.encounters.forEach((e) => list.append(encounterCard(e)));
+    wrap.append(list);
+  }
+
+  function encounterCard(e) {
+    if (!e.found) {
+      const card = el("div", "rounded-box border border-dashed border-error/40 bg-base-100 p-4");
+      card.append(el("div", "font-display font-semibold tracking-wide", e.title));
+      card.append(el("div", "text-sm text-error/80", "Note not found in the vault"));
+      return card;
+    }
+
+    const card = el("details", "collapse collapse-arrow rounded-box border border-secondary/20 bg-base-100 shadow");
+    card.open = state.openEncounters.has(e.name);
+    card.ontoggle = () => (card.open ? state.openEncounters.add(e.name) : state.openEncounters.delete(e.name));
+
+    const summary = el("summary", "collapse-title");
+    summary.append(el("div", "font-display text-lg font-semibold tracking-wide text-secondary", e.title));
+    const tags = el("div", "mt-1 flex flex-wrap gap-1.5");
+    if (e.meta.type) tags.append(el("span", "badge badge-sm badge-primary badge-soft", e.meta.type));
+    if (e.meta.difficulty) tags.append(el("span", "badge badge-sm badge-accent badge-soft", e.meta.difficulty));
+    if (e.meta.duration) tags.append(el("span", "badge badge-sm badge-ghost", e.meta.duration));
+    summary.append(tags);
+    if (e.meta.location) {
+      const loc = el("div", "mt-1 text-sm text-base-content/60");
+      loc.innerHTML = vaultMarkdown(e.meta.location);
+      summary.append(loc);
+    }
+    card.append(summary);
+
+    const body = el("div", "collapse-content md");
+    body.innerHTML = markdownHtml(e.markdown);
+    card.append(body);
+    return card;
+  }
+
   // ------------------------------------------------------------- utilities
 
   function confirmDialog(title, text) {
@@ -695,6 +833,7 @@
   $("search").addEventListener("input", render);
   try { currentView = localStorage.getItem("dmc-view") || "scenes"; } catch {}
   if (!VIEWS[currentView]) currentView = "scenes";
+  if (currentView === "encounters") loadSessions();
   connect();
   render();
 </script>

@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -21,6 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 DATA_DIR = Path(os.environ.get("DMC_DATA_DIR", ROOT / "data"))
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
+VAULT_DIR = Path(os.environ.get("DMC_VAULT_DIR", Path.home() / "Documents" / "Lysoria"))
+SESSIONS_DIR = VAULT_DIR / "Story" / "Act 1" / "Sessions"
 
 log = logging.getLogger("dm-companion")
 
@@ -183,6 +186,84 @@ async def ui_ws(request):
     return ws
 
 
+# ------------------------------------------------------------------ vault
+
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
+META_RE = re.compile(r"^\*\*(Type|Difficulty|Duration|Location)\*\*:\s*(.+)$")
+
+
+def natural_key(name):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
+
+
+def list_sessions():
+    if not SESSIONS_DIR.is_dir():
+        return []
+    return sorted((p.stem for p in SESSIONS_DIR.glob("*.md")), key=natural_key)
+
+
+def section_links(text, title):
+    """Wikilink targets under the heading named `title`, until the next heading of the same or higher level."""
+    links, level = [], None
+    for line in text.splitlines():
+        heading = HEADING_RE.match(line)
+        if heading:
+            if level is not None and len(heading.group(1)) <= level:
+                break
+            if level is None and heading.group(2).strip().lower() == title:
+                level = len(heading.group(1))
+            continue
+        if level is not None:
+            links += [m.group(1).strip() for m in WIKILINK_RE.finditer(line)]
+    return list(dict.fromkeys(links))
+
+
+def resolve_note(target):
+    """Find a vault note the way Obsidian resolves [[target]]: by path, else by file name."""
+    direct = (VAULT_DIR / target).with_suffix(".md")
+    if direct.is_file() and VAULT_DIR in direct.resolve().parents:
+        return direct
+    name = Path(target).name + ".md"
+    matches = [p for p in VAULT_DIR.rglob(name) if not p.relative_to(VAULT_DIR).parts[0] in ("books", ".obsidian", ".trash")]
+    # prefer notes next to the session's act
+    matches.sort(key=lambda p: (SESSIONS_DIR.parent not in p.parents, len(p.parts)))
+    return matches[0] if matches else None
+
+
+def parse_encounter(name, path):
+    meta, body, title = {}, [], name
+    for line in path.read_text(encoding="utf-8").splitlines():
+        heading = HEADING_RE.match(line)
+        if heading and len(heading.group(1)) == 1 and title == name and not body:
+            title = re.sub(r"^Encounter\s*-\s*", "", heading.group(2))
+            continue
+        field = META_RE.match(line.strip())
+        if field and not any(l.startswith("## ") for l in body):
+            meta[field.group(1).lower()] = field.group(2)
+            continue
+        body.append(line)
+    return {"name": name, "title": title, "found": True, "meta": meta,
+            "path": str(path.relative_to(VAULT_DIR)), "markdown": "\n".join(body).strip()}
+
+
+async def api_sessions(_request):
+    return web.json_response({"sessions": list_sessions()})
+
+
+async def api_encounters(request):
+    session = request.query.get("session", "")
+    if session not in list_sessions():
+        raise web.HTTPNotFound(text="No such session")
+    text = (SESSIONS_DIR / f"{session}.md").read_text(encoding="utf-8")
+    encounters = []
+    for target in section_links(text, "encounters"):
+        path = resolve_note(target)
+        encounters.append(parse_encounter(Path(target).name, path) if path else
+                          {"name": Path(target).name, "title": Path(target).name, "found": False})
+    return web.json_response({"session": session, "encounters": encounters})
+
+
 async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -193,6 +274,8 @@ def make_app():
     app.router.add_get("/", index)
     app.router.add_get("/ws/foundry", foundry_ws)
     app.router.add_get("/ws/ui", ui_ws)
+    app.router.add_get("/api/sessions", api_sessions)
+    app.router.add_get("/api/encounters", api_encounters)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

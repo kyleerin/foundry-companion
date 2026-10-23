@@ -10,6 +10,7 @@
 <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <style>
   /* Lysoria: dark fantasy theme (stone, parchment, void violet, ember gold) */
   [data-theme="lysoria"] {
@@ -86,6 +87,7 @@
       <li><a data-view="encounters">Encounters</a></li>
       <li><a data-view="players">Players</a></li>
       <li><a data-view="npcs">NPCs</a></li>
+      <li><a data-view="map">Map</a></li>
       <li><a data-view="notes">Notes</a></li>
       <li><a data-view="clocks">Clocks</a></li>
       <li><a data-view="showcase">Showcase</a></li>
@@ -129,6 +131,11 @@
 </header>
 
 <main id="view" class="p-4"></main>
+<!-- relationship map graph: kept outside #view so re-renders don't detach it -->
+<div id="map-host" class="relative mx-4 mb-4 hidden">
+  <div id="map-graph" class="w-full rounded-box border border-secondary/20 bg-base-300/60" style="height: calc(100vh - 11rem); min-height: 24rem"></div>
+  <div id="map-panel"></div>
+</div>
 
 <dialog id="confirm" class="modal">
   <div class="modal-box border border-secondary/30">
@@ -204,6 +211,7 @@
     note: null, // markdown of the selected session note; null while loading
     npcs: null, // NPC notes from the vault; null until loaded
     players: null, // player character notes from the vault; null until loaded
+    relations: null, // relationship map {nodes, edges, session} from the vault; null until loaded
     playerDashboard: null, // vault target of the Player Dashboard note
     clocks: [], // progress clocks: {id, name, segments, filled}
     clockDraft: { name: "", segments: 4 }, // the new clock form
@@ -374,6 +382,7 @@
     $("search").value = "";
     if (view === "npcs" || view === "showcase") loadNpcs();
     if (view === "players" || view === "initiative" || view === "showcase") loadPlayers();
+    if (view === "map") loadRelations();
     render();
   }
 
@@ -384,9 +393,9 @@
 
   // ----------------------------------------------------------------- render
 
-  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes, clocks: renderClocks, showcase: renderShowcase };
-  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes", "clocks", "showcase"]);
-  const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…", showcase: "Find an NPC or player to add…" }; // views that work without Foundry
+  const VIEWS = { scenes: renderScenes, initiative: renderInitiative, encounters: renderEncounters, players: renderPlayers, npcs: renderNpcs, notes: renderNotes, map: renderMap, clocks: renderClocks, showcase: renderShowcase };
+  const OFFLINE_VIEWS = new Set(["encounters", "players", "npcs", "notes", "map", "clocks", "showcase"]);
+  const SEARCH_VIEWS = { scenes: "Search scenes…", npcs: "Search NPCs…", map: "Find on the map…", showcase: "Find an NPC or player to add…" }; // views that work without Foundry
 
   function setStatus(id, on, label) {
     const badge = $(id);
@@ -413,7 +422,9 @@
     const focusCursor = active?.selectionStart;
 
     const root = $("view");
+    root.classList.remove("pb-0");
     root.replaceChildren();
+    $("map-host").classList.toggle("hidden", currentView !== "map" || !state.connected || state.relations === null);
     if (!state.connected) root.append(emptyState("Can't reach the DM Companion server. Is it running?"));
     else if (!state.foundryConnected && !OFFLINE_VIEWS.has(currentView)) root.append(emptyState("Waiting for Foundry. Open your world as GM with the DM Companion Bridge module enabled.", true));
     else VIEWS[currentView](root);
@@ -928,6 +939,7 @@
     state.encounters = null;
     state.note = null;
     try { localStorage.setItem("dmc-session", session); } catch {}
+    if (currentView === "map") loadRelations();
     render();
     const query = `session=${encodeURIComponent(session)}`;
     const [encounters, note] = await Promise.allSettled([getJson(`/api/encounters?${query}`), getJson(`/api/note?${query}`)]);
@@ -1027,6 +1039,7 @@
   window.addEventListener("focus", () => {
     loadNpcs();
     if (currentView === "players" || currentView === "showcase") loadPlayers();
+    if (currentView === "map") loadRelations();
   });
 
   function inlineHtml(text) {
@@ -1077,6 +1090,219 @@
       card.append(line);
     }
     return card;
+  }
+
+  // -------------------------------------------------------------------- map
+
+  // relationship map: NPC, player, faction and location notes joined by their [[links]]
+  const MAP_TYPES = { pc: "Players", npc: "NPCs", faction: "Factions", location: "Locations" };
+  const MAP_KINDS = { member: "Faction", location: "Location", knows: "Knows", link: "Link" }; // strongest first
+  const MAP_COLORS = { pc: "accent", npc: "secondary", faction: "primary", location: "success", member: "primary", knows: "info", link: "neutral-content" };
+  const map = { cy: null, key: null, placed: new Set(), selected: null, edge: null };
+  state.mapFilters = { pc: true, npc: true, faction: true, location: true, isolated: false, session: false };
+  try { Object.assign(state.mapFilters, JSON.parse(localStorage.getItem("dmc-map") || "{}")); } catch {}
+
+  async function loadRelations() {
+    try {
+      const query = state.session ? `?session=${encodeURIComponent(state.session)}` : "";
+      state.relations = await getJson(`/api/relations${query}`);
+    } catch (err) {
+      state.relations ??= { nodes: [], edges: [], session: [] };
+      toast(`Couldn't load the map: ${err.message}`, true);
+    }
+    render();
+  }
+
+  function setMapFilter(name) {
+    state.mapFilters[name] = !state.mapFilters[name];
+    try { localStorage.setItem("dmc-map", JSON.stringify(state.mapFilters)); } catch {}
+    render();
+  }
+
+  function renderMap(root) {
+    if (state.relations === null) return root.append(emptyState("Loading…", true));
+    const f = state.mapFilters;
+    const linked = new Set(state.relations.edges.flatMap((e) => [e.source, e.target]));
+    const isolated = state.relations.nodes.filter((n) => !linked.has(n.id)).length;
+
+    const bar = el("div", "mb-3 flex flex-wrap items-center gap-2 rounded-box border border-secondary/20 bg-base-100 px-3 py-2 shadow");
+    const toggle = (label, name, opts = {}) => bar.append(button(label, `btn-xs ${f[name] ? "btn-secondary" : "btn-outline btn-secondary"}`, () => setMapFilter(name), opts));
+    for (const [type, label] of Object.entries(MAP_TYPES)) toggle(label, type);
+    bar.append(el("span", "mx-1 h-5 border-l border-secondary/20"));
+    toggle(`Unconnected (${isolated})`, "isolated", { title: "Show notes with no links to or from other notes" });
+    toggle("This session", "session", {
+      disabled: !state.session,
+      title: state.session ? `Only what ${state.session} links to, and their connections` : "Pick a session first",
+    });
+    const legend = el("div", "ml-auto flex flex-wrap items-center gap-3 text-xs text-base-content/60");
+    for (const [kind, label] of Object.entries(MAP_KINDS)) {
+      const item = el("span", "inline-flex items-center gap-1");
+      const line = el("span", "inline-block w-5 border-t-2");
+      line.style.borderColor = `var(--color-${MAP_COLORS[kind]})`;
+      if (kind === "location") line.style.borderTopStyle = "dashed";
+      item.append(line, label);
+      legend.append(item);
+    }
+    bar.append(legend);
+    root.append(bar);
+
+    root.classList.add("pb-0");
+    const edge = map.edge && state.relations.edges.find((e) => e.id === map.edge);
+    $("map-panel").replaceChildren(...(edge ? [mapEdgePanel(edge)] : []));
+    updateGraph();
+  }
+
+  function mapStyle() {
+    const css = getComputedStyle(document.documentElement);
+    const c = (name) => css.getPropertyValue(`--color-${name}`).trim();
+    const style = [
+      { selector: "node", style: {
+        "background-color": c("neutral"), "border-width": 2, "border-color": c("secondary"), width: 26, height: 26,
+        label: "data(name)", color: c("base-content"), "font-family": "EB Garamond, Georgia, serif", "font-size": 11,
+        "text-valign": "bottom", "text-margin-y": 4, "text-outline-color": c("base-300"), "text-outline-width": 2,
+        "text-wrap": "ellipsis", "text-max-width": 120,
+      } },
+      { selector: "node[img]", style: { "background-image": "data(img)", "background-fit": "cover", "background-clip": "node" } },
+      { selector: 'node[type="pc"]', style: { width: 40, height: 40, "border-width": 3, "font-size": 13, "font-weight": 600 } },
+      { selector: 'node[type="faction"]', style: { shape: "hexagon", width: 36, height: 36, "font-size": 12, "font-family": "Cinzel, Georgia, serif" } },
+      { selector: 'node[type="location"]', style: { shape: "round-rectangle", width: 24, height: 24 } },
+      { selector: "edge", style: { width: 1.5, "line-color": c("neutral-content"), opacity: 0.4, "curve-style": "bezier" } },
+      { selector: 'edge[kind="member"]', style: { width: 2.5, opacity: 0.8 } },
+      { selector: 'edge[kind="location"]', style: { "line-style": "dashed", opacity: 0.7 } },
+      { selector: 'edge[kind="knows"]', style: { width: 2, opacity: 0.8 } },
+      { selector: "node.session", style: { "underlay-color": c("secondary"), "underlay-opacity": 0.3, "underlay-padding": 6, "underlay-shape": "ellipse" } },
+      { selector: ".faded", style: { opacity: 0.12 } },
+      { selector: "node.match, node.selected", style: { "border-color": c("warning"), "border-width": 4, "z-index": 10 } },
+      { selector: "edge.active", style: { opacity: 1, width: 3, "z-index": 10 } },
+      { selector: ".hidden", style: { display: "none" } },
+    ];
+    for (const type of Object.keys(MAP_TYPES)) style.splice(1, 0, { selector: `node[type="${type}"]`, style: { "border-color": c(MAP_COLORS[type]) } });
+    for (const kind of ["member", "location", "knows"]) style.splice(-5, 0, { selector: `edge[kind="${kind}"]`, style: { "line-color": c(MAP_COLORS[kind]) } });
+    return style;
+  }
+
+  function updateGraph() {
+    const { nodes, edges } = state.relations;
+    if (!map.cy) {
+      map.cy = cytoscape({ container: $("map-graph"), style: mapStyle(), minZoom: 0.15, maxZoom: 3 });
+      map.cy.on("tap", "node", (event) => {
+        map.selected = event.target.id();
+        map.edge = null;
+        openLink(map.selected, "", false);
+        render();
+      });
+      map.cy.on("tap", "edge", (event) => {
+        map.edge = event.target.id();
+        map.selected = null;
+        render();
+      });
+      map.cy.on("tap", (event) => {
+        if (event.target !== map.cy || (!map.selected && !map.edge)) return;
+        map.selected = map.edge = null;
+        render();
+      });
+    }
+    const cy = map.cy;
+    cy.resize(); // the graph may have been hidden
+
+    const key = JSON.stringify([nodes, edges]);
+    if (key !== map.key) {
+      map.key = key;
+      const positions = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
+      const kinds = Object.keys(MAP_KINDS);
+      cy.batch(() => {
+        cy.elements().remove();
+        cy.add(nodes.map((n) => ({
+          group: "nodes",
+          data: { ...n, ...(n.image && { img: `/api/vault-file?path=${encodeURIComponent(n.image)}` }) },
+          position: positions.get(n.id),
+        })));
+        cy.add(edges.map((e) => ({ group: "edges", data: { ...e, kind: kinds.find((k) => e.kinds.includes(k)) } })));
+      });
+      map.placed = new Set([...map.placed].filter((id) => positions.has(id) && cy.getElementById(id).length));
+    }
+
+    // filters
+    const f = state.mapFilters;
+    const session = new Set(state.relations.session);
+    const near = new Set(session);
+    if (f.session) cy.nodes().filter((n) => session.has(n.id())).neighborhood("node").forEach((n) => near.add(n.id()));
+    const query = $("search").value.trim().toLowerCase();
+    cy.batch(() => {
+      cy.nodes().forEach((n) => {
+        n.toggleClass("hidden", !f[n.data("type")] || (f.session && !near.has(n.id())));
+        n.toggleClass("session", f.session && session.has(n.id()));
+      });
+      cy.edges().forEach((e) => e.toggleClass("hidden", e.source().hasClass("hidden") || e.target().hasClass("hidden")));
+      if (!f.isolated) cy.nodes().forEach((n) => {
+        if (!n.hasClass("hidden") && n.connectedEdges().every((e) => e.hasClass("hidden"))) n.addClass("hidden");
+      });
+
+      // highlight: the selected node and its neighbors, the selected edge, or search matches
+      cy.elements().removeClass("faded match selected active");
+      const selected = map.selected && cy.getElementById(map.selected);
+      const edge = map.edge && cy.getElementById(map.edge);
+      if (selected?.length) {
+        selected.addClass("selected");
+        const keep = selected.closedNeighborhood();
+        cy.elements().not(keep).addClass("faded");
+        keep.edges().addClass("active");
+      } else if (edge?.length) {
+        const keep = edge.union(edge.connectedNodes());
+        cy.elements().not(keep).addClass("faded");
+        edge.addClass("active");
+      } else if (query) {
+        const matches = cy.nodes().filter((n) => n.data("name").toLowerCase().includes(query));
+        matches.addClass("match");
+        cy.elements().not(matches).addClass("faded");
+      }
+    });
+
+    // lay out once nodes appear that have never been placed
+    const visible = cy.elements().not(".hidden");
+    if (visible.nodes().some((n) => !map.placed.has(n.id()))) {
+      visible.layout({ name: "cose", animate: false, randomize: true, padding: 30, nodeRepulsion: () => 12000, idealEdgeLength: () => 80, componentSpacing: 80 }).run();
+      visible.nodes().forEach((n) => map.placed.add(n.id()));
+      cy.fit(visible, 30);
+    }
+  }
+
+  // Enter in the header search: jump to the first visible match
+  function focusMapMatch() {
+    const query = $("search").value.trim().toLowerCase();
+    const node = query && map.cy?.nodes().not(".hidden").filter((n) => n.data("name").toLowerCase().includes(query))[0];
+    if (!node) return toast("Nothing on the map matches", true);
+    $("search").value = "";
+    map.selected = node.id();
+    map.edge = null;
+    map.cy.animate({ center: { eles: node }, zoom: Math.max(map.cy.zoom(), 1.2) }, { duration: 300 });
+    openLink(node.id(), "", false);
+    render();
+  }
+
+  // why two notes are connected: the lines with the links
+  function mapEdgePanel(edge) {
+    const names = new Map(state.relations.nodes.map((n) => [n.id, n.name]));
+    const panel = el("div", "absolute left-3 top-3 z-10 flex max-h-[70%] w-[28rem] max-w-[calc(100%-1.5rem)] flex-col rounded-box border border-secondary/30 bg-base-100/95 shadow-xl backdrop-blur");
+    const head = el("div", "flex items-center gap-2 border-b border-secondary/20 px-3 py-2");
+    head.append(el("div", "min-w-0 flex-1 truncate font-display font-semibold tracking-wide text-secondary",
+      `${names.get(edge.source)} ↔ ${names.get(edge.target)}`));
+    head.append(button("", "btn-xs btn-ghost btn-square", () => { map.edge = null; render(); }, { iconPath: ICONS.close, title: "Close" }));
+    panel.append(head);
+    const list = el("ul", "flex flex-col gap-2 overflow-y-auto p-3 text-sm");
+    for (const item of edge.evidence) {
+      const row = el("li");
+      const meta = el("div", "mb-0.5 flex items-center gap-2 text-xs text-base-content/60");
+      const badge = el("span", "badge badge-xs badge-soft", MAP_KINDS[item.kind]);
+      badge.style.color = `var(--color-${MAP_COLORS[item.kind]})`;
+      meta.append(badge, `in ${names.get(item.from)}`);
+      const text = el("div", "text-base-content/85");
+      text.innerHTML = inlineHtml(item.text);
+      row.append(meta, text);
+      list.append(row);
+    }
+    panel.append(list);
+    return panel;
   }
 
   // ---------------------------------------------------------------- players
@@ -1563,9 +1789,14 @@
 
   $("search").addEventListener("input", () => {
     searchIndex = 0;
+    map.selected = map.edge = null;
     render();
   });
   $("search").addEventListener("keydown", (event) => {
+    if (currentView === "map" && event.key === "Enter") {
+      event.preventDefault();
+      return focusMapMatch();
+    }
     const matches = showcaseMatches();
     if (!matches.length) return;
     if (event.key === "Enter") pickSearchResult(matches[searchIndex] || matches[0]);

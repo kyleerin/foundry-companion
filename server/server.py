@@ -27,6 +27,11 @@ SESSIONS_DIR = VAULT_DIR / "Story" / "Act 1" / "Sessions"
 NPCS_DIR = VAULT_DIR / "NPCs"
 PLAYERS_DIR = VAULT_DIR / "Players"
 PLAYER_DASHBOARD = "Player Dashboard"
+FACTIONS_DIR = VAULT_DIR / "Factions"
+LOCATIONS_DIR = VAULT_DIR / "World" / "Locations"
+# relationship map nodes: folder, node type, note names to leave out
+MAP_FOLDERS = [(NPCS_DIR, "npc", set()), (PLAYERS_DIR, "pc", {PLAYER_DASHBOARD}),
+               (FACTIONS_DIR, "faction", {"Factions Notes"}), (LOCATIONS_DIR, "location", {"Inspirations"})]
 
 log = logging.getLogger("dm-companion")
 
@@ -503,6 +508,89 @@ async def api_players(_request):
                               "dashboard": f"{PLAYERS_DIR.name}/{PLAYER_DASHBOARD}" if has_dashboard else None})
 
 
+def link_snippet(line):
+    """A line of a note, trimmed for showing why two nodes are connected."""
+    text = re.sub(r"^\s*([-*+]|\d+\.)\s+(\[.\]\s+)?", "", line).strip()
+    return text if len(text) <= 240 else text[:237].rstrip() + "…"
+
+
+def build_relations():
+    """Nodes for every NPC, player, faction and location note, edges for the [[links]] between them."""
+    paths = [(p, kind) for folder, kind, skip in MAP_FOLDERS if folder.is_dir()
+             for p in folder.rglob("*.md") if p.stem not in skip]
+    by_target, by_name = {}, {}
+    nodes = []
+    for path, kind in paths:
+        target = str(path.relative_to(VAULT_DIR).with_suffix("")).replace("\\", "/")
+        node = {"id": target, "name": path.stem, "type": kind}
+        nodes.append((node, path))
+        by_target[target.lower()] = node
+        by_name.setdefault(path.stem.lower(), node)
+
+    def resolve(link):
+        link = link.strip().replace("\\", "/")
+        return by_target.get(link.lower()) or by_name.get(link.split("/")[-1].lower())
+
+    edges = {}
+    for node, path in nodes:
+        text = path.read_text(encoding="utf-8")
+        image = first_image(text)
+        if image:
+            node["image"] = image.replace("\\", "/")
+        heading = ""
+        for line in text.splitlines():
+            match = HEADING_RE.match(line)
+            if match:
+                heading = match.group(2).lower()
+                continue
+            field = NPC_FIELD_RE.match(line.strip()) or NPC_TABLE_RE.match(line.strip())
+            if field and field.group(1) == "Faction":
+                kind = "member"
+            elif field and field.group(1) == "Location":
+                kind = "location"
+            elif "knows" in heading:
+                kind = "knows"
+            else:
+                kind = "link"
+            for m in WIKILINK_RE.finditer(line):
+                other = resolve(m.group(1))
+                if not other or other is node:
+                    continue
+                key = tuple(sorted((node["id"], other["id"])))
+                edge = edges.setdefault(key, {"id": "|".join(key), "source": key[0], "target": key[1], "kinds": [], "evidence": []})
+                if kind not in edge["kinds"]:
+                    edge["kinds"].append(kind)
+                item = {"from": node["id"], "kind": kind, "text": link_snippet(line)}
+                if item not in edge["evidence"] and len(edge["evidence"]) < 8:
+                    edge["evidence"].append(item)
+    return {"nodes": [n for n, _ in nodes], "edges": list(edges.values())}
+
+
+relations_cache = {"key": None, "value": None}
+
+
+async def api_relations(request):
+    files = [p for folder, _, _ in MAP_FOLDERS if folder.is_dir() for p in folder.rglob("*.md")]
+    key = tuple(sorted((str(p), p.stat().st_mtime_ns) for p in files))
+    if relations_cache["key"] != key:
+        relations_cache["value"] = build_relations()
+        relations_cache["key"] = key
+    graph = relations_cache["value"]
+
+    # nodes the selected session note links to
+    session, linked = request.query.get("session", ""), []
+    if session in list_sessions():
+        names = {n["name"].lower(): n["id"] for n in graph["nodes"]}
+        ids = {n["id"].lower(): n["id"] for n in graph["nodes"]}
+        text = (SESSIONS_DIR / f"{session}.md").read_text(encoding="utf-8")
+        for m in WIKILINK_RE.finditer(text):
+            link = m.group(1).strip().replace("\\", "/")
+            node = ids.get(link.lower()) or names.get(link.split("/")[-1].lower())
+            if node and node not in linked:
+                linked.append(node)
+    return web.json_response({**graph, "session": linked})
+
+
 async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -521,6 +609,7 @@ def make_app():
     app.router.add_get("/api/npc", api_npc)
     app.router.add_get("/api/vault-file", api_vault_file)
     app.router.add_get("/api/players", api_players)
+    app.router.add_get("/api/relations", api_relations)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

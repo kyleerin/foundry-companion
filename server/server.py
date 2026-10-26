@@ -295,7 +295,8 @@ def resolve_note(target):
 
 def parse_encounter(name, path):
     meta, body, title = {}, [], name
-    for line in path.read_text(encoding="utf-8").splitlines():
+    text = path.read_text(encoding="utf-8")
+    for line in text.splitlines():
         heading = HEADING_RE.match(line)
         if heading and len(heading.group(1)) == 1 and title == name and not body:
             title = re.sub(r"^Encounter\s*-\s*", "", heading.group(2))
@@ -305,7 +306,21 @@ def parse_encounter(name, path):
             meta[field.group(1).lower()] = field.group(2)
             continue
         body.append(line)
+    scene, npcs, section = "", [], None
+    for line in text.splitlines():
+        heading = HEADING_RE.match(line)
+        if heading:
+            section = heading.group(2).strip().lower()
+            continue
+        field = re.match(r"^\s*(?:\*\*)?(Scene|NPCs)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.*?)\s*$", line, re.I)
+        kind, value = (field.group(1).lower(), field.group(2)) if field else (section, line)
+        links = [m.group(1).strip() for m in WIKILINK_RE.finditer(value)]
+        if kind == "scene" and not scene:
+            scene = links[0] if links else value.strip().lstrip("- ").strip()
+        elif kind == "npcs":
+            npcs.extend(links or [n.strip().lstrip("- ").strip() for n in value.split(",") if n.strip()])
     return {"name": name, "title": title, "found": True, "meta": meta,
+            "scene": scene, "npcs": list(dict.fromkeys(npcs)),
             "path": str(path.relative_to(VAULT_DIR)), "markdown": "\n".join(body).strip()}
 
 
@@ -568,6 +583,44 @@ def build_relations():
 
 relations_cache = {"key": None, "value": None}
 
+IMPROV_NOTE = VAULT_DIR / "Story" / "improv.md"
+ROLL_HEADING_RE = re.compile(r"^(.*?)\s*\((d\d+)\b,?\s*(.*?)\)\s*$")
+
+
+def table_cells(line):
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+async def api_improv(_request):
+    """Every "## Title (dN)" heading in the improv note that is followed by a table."""
+    if not IMPROV_NOTE.is_file():
+        return web.json_response({"tables": [], "note": None})
+    tables, current, intro = [], None, []
+    for line in IMPROV_NOTE.read_text(encoding="utf-8").splitlines():
+        heading = HEADING_RE.match(line)
+        if heading:
+            current = None
+            roll = ROLL_HEADING_RE.match(heading.group(2))
+            if roll:
+                current = {"title": roll.group(1), "die": roll.group(2), "hint": roll.group(3), "columns": [], "rows": [], "intro": []}
+                tables.append(current)
+            continue
+        if not current:
+            continue
+        if line.strip().startswith("|"):
+            cells = table_cells(line)
+            if all(re.fullmatch(r":?-+:?", c) for c in cells):
+                continue
+            if not current["columns"]:
+                current["columns"] = cells[1:]
+            else:
+                current["rows"].append(cells[1:])
+        elif line.strip() and not current["rows"]:
+            current["intro"].append(line.strip())
+    tables = [{**t, "intro": " ".join(t["intro"]), "split": "twice" in t["hint"].lower()} for t in tables if t["rows"]]
+    note = str(IMPROV_NOTE.relative_to(VAULT_DIR).with_suffix("")).replace("\\", "/")
+    return web.json_response({"tables": tables, "note": note})
+
 
 async def api_relations(request):
     files = [p for folder, _, _ in MAP_FOLDERS if folder.is_dir() for p in folder.rglob("*.md")]
@@ -610,6 +663,7 @@ def make_app():
     app.router.add_get("/api/vault-file", api_vault_file)
     app.router.add_get("/api/players", api_players)
     app.router.add_get("/api/relations", api_relations)
+    app.router.add_get("/api/improv", api_improv)
     app.router.add_static("/static/", WEB_DIR)
     return app
 

@@ -488,6 +488,21 @@ const COMMANDS = {
   },
 
   // an NPC's or player character's portrait, for the showcase
+  async loadEncounter({ scene = "", npcs = [] }) {
+    const matches = scene ? game.scenes.filter((s) => s.id === scene || s.name.trim().toLowerCase() === scene.trim().toLowerCase()) : [];
+    if (scene && matches.length !== 1) throw new Error(matches.length ? `More than one scene named ${scene}` : `No Foundry scene named ${scene}`);
+    const missing = npcs.filter((target) => !findActor(target.split("/").pop()));
+    if (missing.length) return { missing };
+    const artwork = [];
+    // Resolve everything before activating the scene, so a typo doesn't partially load it.
+    for (const target of npcs) {
+      const name = target.split("/").pop();
+      artwork.push(await COMMANDS.findArtwork({ name }));
+    }
+    if (matches.length) await matches[0].activate();
+    return { scene: matches[0]?.name, artwork };
+  },
+
   async findArtwork({ name, character = false }) {
     const actor = findActor(name, character);
     if (!actor) throw new Error(`No Foundry actor named ${name}`);

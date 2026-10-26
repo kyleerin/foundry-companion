@@ -33,6 +33,26 @@ web UI (localhost:4000) <-ws /ws/ui-> server/server.py <-ws /ws/foundry-> Foundr
 3. UI: add a render function and register it in `VIEWS` + the nav menu
 4. The user must reload Foundry (F5) after module changes; refresh the web app after UI changes; restart the server after server changes
 
+## Encounter note format
+
+When creating or editing encounter notes in the vault, include explicit loading fields near the top, before any `##` headings:
+
+```markdown
+# Encounter - Example
+
+**Scene**: Exact Foundry Scene Name
+**NPCs**: [[Slug Marrow]], [[Lady Niyren]]
+
+## Overview
+Encounter description.
+```
+
+- `Scene` names the Foundry scene to activate, not merely the story location. Use its exact name (or Foundry scene ID).
+- `NPCs` lists the NPCs whose portraits should appear. Use comma-separated vault wikilinks; the targets, not aliases, identify existing Foundry actors with artwork.
+- `## Scene` with a scene name and `## NPCs` with one NPC per bullet are also supported, but prefer the fields above.
+- Omit a field when it is not needed: no scene leaves the active scene unchanged; no NPCs adds no artwork. `Location` and incidental links in the prose are not loading instructions.
+- **Load encounter** requires Foundry, validates the scene and portraits before activating, and adds the portraits without hiding existing showcase artwork. It does not start combat or place tokens.
+
 ## Running & testing
 - `./run.sh` starts the server; the user usually has it running on port 4000. Never kill it to test.
 - Test on another port with throwaway data: `DMC_PORT=4100 DMC_DATA_DIR=<scratch dir> .venv/bin/python server/server.py`, drive it with an aiohttp client faking the Foundry and UI sockets.

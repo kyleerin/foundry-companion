@@ -671,6 +671,14 @@
   }
 
   // creates the NPC in Foundry from its vault note, or updates it if it exists
+  async function syncNpc(target) {
+    const note = await getJson(`/api/npc?target=${encodeURIComponent(target)}`);
+    const image = note.image ? { name: note.image.split("/").pop(), data: await imageDataUrl(note.image) } : null;
+    const reply = await sendCommand("syncNpc", { name: note.name, biography: biographyHtml(note.markdown), stats: note.stats, image });
+    if (!reply.ok) throw new Error(reply.error);
+    return reply.result;
+  }
+
   function syncNpcButton(n) {
     const key = `sync:${n.target}`;
     return button("", "btn-xs btn-ghost btn-square -mt-1", async (event) => {
@@ -678,11 +686,7 @@
       state.pending.add(key);
       render();
       try {
-        const note = await getJson(`/api/npc?target=${encodeURIComponent(n.target)}`);
-        const image = note.image ? { name: note.image.split("/").pop(), data: await imageDataUrl(note.image) } : null;
-        const reply = await sendCommand("syncNpc", { name: note.name, biography: biographyHtml(note.markdown), stats: note.stats, image });
-        if (!reply.ok) throw new Error(reply.error);
-        const { name, created, fields, imageSet } = reply.result;
+        const { name, created, fields, imageSet } = await syncNpc(n.target);
         const extras = [fields && `${fields} stat${fields === 1 ? "" : "s"}`, imageSet && "image"].filter(Boolean);
         toast(`${created ? "Created" : "Updated"} ${name} in Foundry${extras.length ? ` (${extras.join(" + ")} from the note)` : ""}`);
       } catch (err) {
@@ -1747,6 +1751,35 @@
 
   // ------------------------------------------------------------- encounters
 
+  async function loadEncounter(e) {
+    const key = `encounter:${e.name}`;
+    if (state.pending.has(key)) return;
+    state.pending.add(key);
+    render();
+    try {
+      let reply = await sendCommand("loadEncounter", { scene: e.scene, npcs: e.npcs });
+      if (reply.ok && reply.result.missing?.length) {
+        for (const target of reply.result.missing) await syncNpc(target);
+        reply = await sendCommand("loadEncounter", { scene: e.scene, npcs: e.npcs });
+      }
+      if (!reply.ok) throw new Error(reply.error);
+      if (reply.result.missing?.length) throw new Error(`Actors still missing after sync: ${reply.result.missing.join(", ")}`);
+      const items = state.showcase.map((i) => ({ ...i }));
+      for (const { name, src } of reply.result.artwork) {
+        const existing = items.find((i) => i.src === src);
+        if (existing) existing.shown = true;
+        else items.push({ id: crypto.randomUUID(), name, src, shown: true });
+      }
+      saveShowcase(items);
+      toast(`Loaded ${e.title}`);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      state.pending.delete(key);
+      render();
+    }
+  }
+
   function encounterCard(e) {
     if (!e.found) {
       const card = el("div", "rounded-box border border-dashed border-error/40 bg-base-100 p-4");
@@ -1776,6 +1809,13 @@
     const body = el("div", "collapse-content md");
     body.innerHTML = markdownHtml(e.markdown);
     addShowcaseLinks(body);
+    const load = button(state.pending.has(`encounter:${e.name}`) ? "Loading…" : "Load encounter",
+      "btn-sm btn-secondary mb-3", () => loadEncounter(e),
+      { disabled: !state.foundryConnected || state.pending.has(`encounter:${e.name}`) || (!e.scene && !e.npcs?.length) });
+    load.title = !state.foundryConnected ? "Connect Foundry to load this encounter"
+      : !e.scene && !e.npcs?.length ? "Add Scene and NPCs fields to this note"
+      : `Scene: ${e.scene || "unchanged"}; NPCs: ${(e.npcs || []).join(", ") || "none"}`;
+    body.prepend(load);
     card.append(body);
     return card;
   }

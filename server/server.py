@@ -295,7 +295,8 @@ def resolve_note(target):
 
 def parse_encounter(name, path):
     meta, body, title = {}, [], name
-    for line in path.read_text(encoding="utf-8").splitlines():
+    text = path.read_text(encoding="utf-8")
+    for line in text.splitlines():
         heading = HEADING_RE.match(line)
         if heading and len(heading.group(1)) == 1 and title == name and not body:
             title = re.sub(r"^Encounter\s*-\s*", "", heading.group(2))
@@ -305,7 +306,21 @@ def parse_encounter(name, path):
             meta[field.group(1).lower()] = field.group(2)
             continue
         body.append(line)
+    scene, npcs, section = "", [], None
+    for line in text.splitlines():
+        heading = HEADING_RE.match(line)
+        if heading:
+            section = heading.group(2).strip().lower()
+            continue
+        field = re.match(r"^\s*(?:\*\*)?(Scene|NPCs)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.*?)\s*$", line, re.I)
+        kind, value = (field.group(1).lower(), field.group(2)) if field else (section, line)
+        links = [m.group(1).strip() for m in WIKILINK_RE.finditer(value)]
+        if kind == "scene" and not scene:
+            scene = links[0] if links else value.strip().lstrip("- ").strip()
+        elif kind == "npcs":
+            npcs.extend(links or [n.strip().lstrip("- ").strip() for n in value.split(",") if n.strip()])
     return {"name": name, "title": title, "found": True, "meta": meta,
+            "scene": scene, "npcs": list(dict.fromkeys(npcs)),
             "path": str(path.relative_to(VAULT_DIR)), "markdown": "\n".join(body).strip()}
 
 

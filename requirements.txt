@@ -1,0 +1,2 @@
+# Last aiohttp release line supporting Python 3.9.
+aiohttp==3.13.5

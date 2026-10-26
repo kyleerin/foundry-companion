@@ -74,9 +74,66 @@ Local app data lives in `data/` by default; preserve that directory when updatin
   WebSocket URL in Foundry's module settings to match.
 - **Foundry disconnected:** confirm the module is enabled, you are logged in as
   GM, and Foundry is opened using a local address. Reload Foundry after module updates.
-- **No vault notes:** installation does not configure your campaign vault.
-  The current default is `~/Documents/Lysoria`; `DMC_VAULT_DIR` overrides that root,
-  but session notes currently need to be under `Story/Act 1/Sessions`.
+- **No vault notes:** configure your vault as described below. Check the server
+  startup output for missing folders, and restart after configuration changes.
+
+## Configure a campaign vault (optional)
+
+Without a vault, scene and initiative controls, clocks, and showcase still work
+(Foundry is required for Foundry actions). Sessions, encounters, notes, player/NPC
+note lists, the relationship map, and improv tables need a vault. No Obsidian
+installation is required: the vault is a folder of Markdown files.
+
+Copy `config.example.json` to `config.json` in the project root. Set `vault_dir`
+to your vault folder and adjust the content paths to match its layout:
+
+```json
+{
+  "vault_dir": "~/Documents/My Campaign",
+  "sessions_dir": "Sessions",
+  "npcs_dir": "Characters/NPCs",
+  "players_dir": "Characters/Players",
+  "factions_dir": "Factions",
+  "locations_dir": "World/Locations",
+  "improv_note": "Tables/improv.md"
+}
+```
+
+On Windows, use forward slashes in JSON paths, e.g. `"C:/Users/YourName/Documents/My Campaign"`.
+The vault root supports `~`, absolute paths, or paths relative to the project root.
+All other paths are relative to the vault and must stay inside it. Missing content
+folders are allowed and produce empty lists; an invalid vault root fails startup
+with a configuration error. Configuration never creates or moves vault content.
+
+`config.json` is gitignored. Restart the server after editing it.
+`DMC_VAULT_DIR`, if set, overrides `vault_dir`; an empty value disables vault
+features. A missing/null `vault_dir` also disables them.
+
+Sessions are `.md` files directly inside `sessions_dir`; player/NPC/map folders
+are scanned recursively. The optional `Player Dashboard.md` stays inside the
+configured players folder. Encounters are notes linked under a session's
+`## Encounters` heading. To load Foundry content, use explicit fields:
+
+```markdown
+# Encounter - Example
+
+**Scene**: Exact Foundry Scene Name
+**NPCs**: [[Existing NPC Actor Name]]
+
+## Overview
+Encounter description.
+```
+
+Load encounter activates the scene and adds NPC portraits without clearing
+existing artwork. It does not start combat or place tokens.
+
+### Migrating the original campaign layout
+
+The app no longer automatically reads `~/Documents/Lysoria`. To preserve the
+original layout, use `vault_dir: "~/Documents/Lysoria"`,
+`sessions_dir: "Story/Act 1/Sessions"`, `locations_dir: "World/Locations"`, and
+`improv_note: "Story/improv.md"` in `config.json`; keep the other example defaults.
+These are JSON settings, not shell commands.
 
 ## Layout
 - `server/server.py` — aiohttp server; serves the UI and relays messages

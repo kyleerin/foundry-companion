@@ -22,16 +22,62 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 DATA_DIR = Path(os.environ.get("DMC_DATA_DIR", ROOT / "data"))
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
-VAULT_DIR = Path(os.environ.get("DMC_VAULT_DIR", Path.home() / "Documents" / "Lysoria"))
-SESSIONS_DIR = VAULT_DIR / "Story" / "Act 1" / "Sessions"
-NPCS_DIR = VAULT_DIR / "NPCs"
-PLAYERS_DIR = VAULT_DIR / "Players"
+
+
+def load_vault_config(root, environ):
+    """Load optional local configuration; all content paths stay inside the vault."""
+    defaults = {
+        "sessions_dir": "Sessions", "npcs_dir": "NPCs", "players_dir": "Players",
+        "factions_dir": "Factions", "locations_dir": "Locations", "improv_note": "improv.md",
+    }
+    path = root / "config.json"
+    config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError("config.json must contain a JSON object")
+    unknown = config.keys() - (defaults.keys() | {"vault_dir"})
+    if unknown:
+        raise ValueError(f"Unknown config.json settings: {', '.join(sorted(unknown))}")
+    vault = environ.get("DMC_VAULT_DIR", config.get("vault_dir"))
+    if vault is not None and not isinstance(vault, str):
+        raise ValueError("vault_dir must be a path string or null")
+    vault = Path(vault).expanduser() if vault else None
+    if vault is not None:
+        vault = (root / vault).resolve()
+        if not vault.is_dir():
+            raise ValueError(f"Vault directory does not exist: {vault}")
+    paths = {}
+    for key, default in defaults.items():
+        value = config.get(key, default)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{key} must be a non-empty relative path")
+        relative = Path(value)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"{key} must be a relative path inside the vault")
+        resolved = (vault / relative).resolve() if vault is not None else None
+        if resolved is not None and resolved != vault and vault not in resolved.parents:
+            raise ValueError(f"{key} must stay inside the vault")
+        if resolved is not None and resolved.exists():
+            valid = resolved.is_file() if key == "improv_note" else resolved.is_dir()
+            if not valid:
+                raise ValueError(f"{key} has the wrong file type: {resolved}")
+        paths[key] = resolved
+    return vault, paths
+
+
+try:
+    VAULT_DIR, VAULT_PATHS = load_vault_config(ROOT, os.environ)
+except (OSError, ValueError) as error:
+    raise SystemExit(f"Vault configuration error: {error}") from error
+SESSIONS_DIR = VAULT_PATHS["sessions_dir"]
+NPCS_DIR = VAULT_PATHS["npcs_dir"]
+PLAYERS_DIR = VAULT_PATHS["players_dir"]
 PLAYER_DASHBOARD = "Player Dashboard"
-FACTIONS_DIR = VAULT_DIR / "Factions"
-LOCATIONS_DIR = VAULT_DIR / "World" / "Locations"
+FACTIONS_DIR = VAULT_PATHS["factions_dir"]
+LOCATIONS_DIR = VAULT_PATHS["locations_dir"]
+IMPROV_NOTE = VAULT_PATHS["improv_note"]
 # relationship map nodes: folder, node type, note names to leave out
 MAP_FOLDERS = [(NPCS_DIR, "npc", set()), (PLAYERS_DIR, "pc", {PLAYER_DASHBOARD}),
-               (FACTIONS_DIR, "faction", {"Factions Notes"}), (LOCATIONS_DIR, "location", {"Inspirations"})]
+               (FACTIONS_DIR, "faction", set()), (LOCATIONS_DIR, "location", set())]
 
 log = logging.getLogger("dm-companion")
 
@@ -260,7 +306,7 @@ def natural_key(name):
 
 
 def list_sessions():
-    if not SESSIONS_DIR.is_dir():
+    if SESSIONS_DIR is None or not SESSIONS_DIR.is_dir():
         return []
     return sorted((p.stem for p in SESSIONS_DIR.glob("*.md")), key=natural_key)
 
@@ -283,6 +329,8 @@ def section_links(text, title):
 
 def resolve_note(target):
     """Find a vault note the way Obsidian resolves [[target]]: by path, else by file name."""
+    if VAULT_DIR is None:
+        return None
     direct = (VAULT_DIR / target).with_suffix(".md")
     if direct.is_file() and VAULT_DIR in direct.resolve().parents:
         return direct
@@ -419,6 +467,8 @@ IMAGE_EMBED_RE = re.compile(r"!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]|!\[[^\]]*\]\(([
 
 def resolve_file(target):
     """A vault file by path, else by file name, the way Obsidian resolves embeds."""
+    if VAULT_DIR is None:
+        return None
     direct = VAULT_DIR / target
     if direct.is_file() and VAULT_DIR in direct.resolve().parents:
         return direct
@@ -454,7 +504,7 @@ async def api_npc(request):
 
 
 async def api_npcs(_request):
-    paths = NPCS_DIR.rglob("*.md") if NPCS_DIR.is_dir() else []
+    paths = NPCS_DIR.rglob("*.md") if NPCS_DIR is not None and NPCS_DIR.is_dir() else []
     npcs = sorted((parse_npc(p) for p in paths), key=lambda n: natural_key(n["name"]))
     return web.json_response({"npcs": npcs})
 
@@ -513,14 +563,14 @@ def parse_player(path, dashboard):
 
 
 async def api_players(_request):
-    if not PLAYERS_DIR.is_dir():
+    if PLAYERS_DIR is None or not PLAYERS_DIR.is_dir():
         return web.json_response({"players": [], "dashboard": None})
     dashboard = player_dashboard()
     paths = [p for p in PLAYERS_DIR.rglob("*.md") if p.stem != PLAYER_DASHBOARD]
     players = sorted((parse_player(p, dashboard) for p in paths), key=lambda n: natural_key(n["name"]))
     has_dashboard = (PLAYERS_DIR / f"{PLAYER_DASHBOARD}.md").is_file()
     return web.json_response({"players": players,
-                              "dashboard": f"{PLAYERS_DIR.name}/{PLAYER_DASHBOARD}" if has_dashboard else None})
+                              "dashboard": (PLAYERS_DIR / PLAYER_DASHBOARD).relative_to(VAULT_DIR).as_posix() if has_dashboard else None})
 
 
 def link_snippet(line):
@@ -531,7 +581,7 @@ def link_snippet(line):
 
 def build_relations():
     """Nodes for every NPC, player, faction and location note, edges for the [[links]] between them."""
-    paths = [(p, kind) for folder, kind, skip in MAP_FOLDERS if folder.is_dir()
+    paths = [(p, kind) for folder, kind, skip in MAP_FOLDERS if folder is not None and folder.is_dir()
              for p in folder.rglob("*.md") if p.stem not in skip]
     by_target, by_name = {}, {}
     nodes = []
@@ -583,7 +633,6 @@ def build_relations():
 
 relations_cache = {"key": None, "value": None}
 
-IMPROV_NOTE = VAULT_DIR / "Story" / "improv.md"
 ROLL_HEADING_RE = re.compile(r"^(.*?)\s*\((d\d+)\b,?\s*(.*?)\)\s*$")
 
 
@@ -593,7 +642,7 @@ def table_cells(line):
 
 async def api_improv(_request):
     """Every "## Title (dN)" heading in the improv note that is followed by a table."""
-    if not IMPROV_NOTE.is_file():
+    if IMPROV_NOTE is None or not IMPROV_NOTE.is_file():
         return web.json_response({"tables": [], "note": None})
     tables, current, intro = [], None, []
     for line in IMPROV_NOTE.read_text(encoding="utf-8").splitlines():
@@ -623,7 +672,7 @@ async def api_improv(_request):
 
 
 async def api_relations(request):
-    files = [p for folder, _, _ in MAP_FOLDERS if folder.is_dir() for p in folder.rglob("*.md")]
+    files = [p for folder, _, _ in MAP_FOLDERS if folder is not None and folder.is_dir() for p in folder.rglob("*.md")]
     key = tuple(sorted((str(p), p.stat().st_mtime_ns) for p in files))
     if relations_cache["key"] != key:
         relations_cache["value"] = build_relations()
@@ -670,5 +719,12 @@ def make_app():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    if VAULT_DIR is None:
+        log.info("No vault configured. Vault features are empty; see config.example.json to enable them.")
+    else:
+        log.info("Vault: %s", VAULT_DIR)
+        for name, path in VAULT_PATHS.items():
+            if not path.exists():
+                log.warning("%s does not exist (this feature will be empty): %s", name, path)
     print(f"DM Companion running at http://localhost:{PORT}")
     web.run_app(make_app(), host=HOST, port=PORT, print=None)

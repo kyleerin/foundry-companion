@@ -86,6 +86,19 @@ Original step 3 checklist:
 
 ## Remaining readiness work
 
+### Deferred follow-up and branch push
+
+The user requested that remediation be documented for later and authorized
+committing/pushing the current work on `release/v1` to `origin`. This authorizes
+the branch push only, not a merge into `main`, remote tag, or published release.
+Earlier no-push statements below describe the state before this authorization.
+
+Resume with `docs/SECURITY_REVIEW.md` and `docs/DEPENDENCY_AUDIT.md`. Python 3.11+
+and per-world clocks/showcase with explicit migration remain recommendations;
+neither has been implemented. Security fixes, dependency updates, CDN/offline
+work, Windows/Linux CI results, and live Foundry validation remain outstanding.
+Do not treat the branch push or passing functional CI as release approval.
+
 ### Progress after step 3
 
 Work continued in the primary checkout on `release/v1`, one commit per requested

@@ -43,9 +43,29 @@ are resolved by pip for your Python version and platform, not locked byte-for-by
 
 ### Connect Foundry
 
-1. Copy the contents of `foundry-module/` into `<Foundry User Data>/Data/modules/dm-companion/`.
-   The resulting folder must contain `module.json` directly, not another `foundry-module` folder.
-   You can find the User Data path in Foundry's configuration.
+The Foundry module is only the bridge; install and run the separate Python
+companion using the instructions above.
+
+#### Install from a release manifest
+
+**Release preparation:** the URL below is the intended release URL. It will not
+work until a release with these assets has been published.
+
+1. In Foundry's Setup screen, open **Add-on Modules → Install Module**.
+2. Paste this into **Manifest URL** and click Install:
+   ```text
+   https://github.com/kyleerin/foundry-companion/releases/latest/download/module.json
+   ```
+3. Open your world **as GM**, and enable **DM Companion Bridge** in Manage Modules.
+4. With the companion server running, open http://localhost:4000.
+
+#### Manual installation (also works before a release)
+
+1. Copy the contents of `foundry-module/` and the repository's `LICENSE` into
+   `<Foundry User Data>/Data/modules/dm-companion/`. Alternatively, extract the
+   built or released `dm-companion.zip` into that directory.
+   The folder must contain `module.json` directly, not another `foundry-module`
+   or `dm-companion` folder. Find the User Data path in Foundry's configuration.
 2. Restart Foundry if it was running, open your world **as GM**, and enable
    **DM Companion Bridge** in Manage Modules.
 3. With the companion server running, open http://localhost:4000.
@@ -53,6 +73,18 @@ are resolved by pip for your Python version and platform, not locked byte-for-by
 For this initial setup, use Foundry in a browser on the same computer at a
 `localhost` or `127.0.0.1` address. Hosted/remote Foundry is not covered by these
 instructions. The module defaults to `ws://localhost:4000/ws/foundry`.
+If you change the companion port, change **DM Companion server URL** in Foundry's
+module settings on the GM's client to match, retaining `/ws/foundry`.
+
+#### Updating
+
+Back up your Foundry user data and the companion's `data/` and `config.json`.
+Once releases exist, use Foundry Setup's module update control; the manifest
+tracks the latest stable release and each version downloads its own ZIP.
+For manual updates, replace the module files with the new ZIP's contents.
+Reload Foundry clients after updating. The module updater does **not** update the
+Python companion: download/check out the matching release of this repository,
+preserve your configuration/data, rerun setup, and restart the companion.
 
 Stop the companion server with Ctrl+C. Start it again with the platform's launch
 command above; setup is only needed initially or when dependencies change.
@@ -134,6 +166,51 @@ original layout, use `vault_dir: "~/Documents/Lysoria"`,
 `sessions_dir: "Story/Act 1/Sessions"`, `locations_dir: "World/Locations"`, and
 `improv_note: "Story/improv.md"` in `config.json`; keep the other example defaults.
 These are JSON settings, not shell commands.
+
+## Building and releasing the Foundry module
+
+From the repository root (Python 3.9+, no extra dependencies):
+
+```sh
+python3 -m unittest test_build_module -v
+python3 build_module.py --tag v0.1.0
+```
+
+On Windows use `py -3` instead of `python3`. Output is the gitignored
+`dist/dm-companion.zip` and `dist/module.json`. The ZIP has `module.json`,
+`scripts/bridge.js`, and `LICENSE` at its root. The explicit allowlist excludes
+the Python app, local configuration, campaign data, environments, and development
+files. When adding runtime assets, update the builder's allowlist and validation.
+Builds use fixed ZIP metadata; repeated builds with the same Python/zlib and
+source files produce identical bytes.
+
+The module manifest is the version source of truth. For each stable release,
+update its `version` and version-specific `download` URL together. Tags use
+`v<version>`; release assets are always named `module.json` and `dm-companion.zip`.
+The project and stable update-manifest URLs stay unchanged. The builder rejects
+tag/URL mismatches, missing files, unexpected ZIP entries, and different embedded
+and standalone manifests. It does not verify that remote URLs are live.
+
+The **Foundry module** GitHub Actions workflow builds/tests on pull requests and
+pushes to `main` or `release/v1`, without publishing. To publish later, after
+explicit approval:
+
+1. Finish release testing, commit the version changes, and push the reviewed code
+   and matching version tag. The tagged commit must include the build tooling.
+2. Ensure this workflow is on the repository's default branch so GitHub exposes
+   **Run workflow**. Run it manually with the existing tag. Leave `publish`
+   unchecked for a validation-only run, or explicitly check it to publish.
+3. The publication job creates a GitHub release from the existing tag and attaches
+   the validated assets. It does not overwrite an existing release. Check both
+   public asset URLs and perform a Foundry install/update test afterward.
+
+Creating/pushing a tag alone does not publish a release. Neither local builds nor
+ordinary CI publish anything. Stable releases only are supported by this workflow;
+prerelease channels need a separate update-manifest policy.
+
+Archive validation is not a live Foundry compatibility test. Installation and
+updating in Foundry, and the advertised Foundry 13–14 compatibility range, still
+need release verification.
 
 ## Layout
 - `server/server.py` — aiohttp server; serves the UI and relays messages

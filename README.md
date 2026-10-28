@@ -2,6 +2,8 @@
 
 A local web app that talks to Foundry VTT.
 
+See the [user guide](docs/USER_GUIDE.md) for all views, note formats, and screenshots.
+
 ```
 web UI (localhost:4000)  <-ws->  Python server  <-ws->  Foundry module (GM's browser)
 ```

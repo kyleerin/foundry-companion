@@ -52,3 +52,27 @@ Installed manifests confirm Foundry 14.369 and dnd5e 6.0.6. No live Foundry serv
 was reachable on port 30000, so integration is **pending**, not passed.
 The module no longer advertises Foundry 13 or an untested `verified` version.
 See the [disposable-world checklist](FOUNDRY_VALIDATION.md) before release.
+
+## CI and regression coverage
+
+`.github/workflows/ci.yml` defines six combinations: macOS, Windows, and Linux
+with Python 3.9 and 3.13. It runs on pull requests, pushes to `main`/`release/v1`,
+or manual dispatch. Permissions are read-only; it never publishes.
+
+Local checks passed:
+
+- 21 Python server tests: configuration/vaultless operation, encounter parsing,
+  the sample vault, command/result forwarding, scene/combat broadcasts, late
+  UI snapshots, disconnect/reconnect, replacement bridge connections, per-world
+  favorites, persisted overlays, origin rejection, invalid JSON, and normalization.
+- 4 packaging tests: reproducibility/allowlisting, tag/URL/reference agreement,
+  and rejection of unexpected archive content.
+- 7 Node bridge tests: pre-activation validation, ambiguous scenes/missing actors,
+  request-correlated errors, visible overlays, player-only readiness, and NPC
+  sync preserving unspecified fields/custom art.
+- Python compilation, bridge/inline-browser JavaScript syntax, and whitespace
+  checks passed. Ruby parsed the workflow YAML and checked the platform matrix.
+
+Node tests use a mocked Foundry API; they do not verify actual Foundry/dnd5e
+implementations. The CI workflow has not run remotely because nothing has been
+pushed. Windows/Linux and Python 3.13 results remain pending.

@@ -3,6 +3,7 @@
 A local web app that talks to Foundry VTT.
 
 See the [user guide](docs/USER_GUIDE.md) for all views, note formats, and screenshots.
+Try the [fictional sample vault](examples/README.md) without using campaign data.
 
 ```
 web UI (localhost:4000)  <-ws->  Python server  <-ws->  Foundry module (GM's browser)

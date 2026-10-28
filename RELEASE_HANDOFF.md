@@ -86,6 +86,29 @@ Original step 3 checklist:
 
 ## Remaining readiness work
 
+### Progress after step 3
+
+Work continued in the primary checkout on `release/v1`, one commit per requested
+item. No push, remote tag, or release was performed.
+
+- `2a2651b`: committed step 3 packaging before starting later work.
+- `dbba8e0`: full user guide with three real-browser fictional-data screenshots.
+- `8909272`: fictional sample vault and API/wikilink validation.
+- `4f5ec7d`: backup/restore, upgrades, and troubleshooting guide.
+- `c929c86`: portable fresh-install check; macOS passed, Windows/Linux pending.
+- `f3be5f0`: installed versions confirmed as Foundry 14.369 / dnd5e 6.0.6;
+  live Foundry was unavailable. Narrowed minimum and removed untested `verified`.
+- `0c9a0a9`: six-job OS/Python CI matrix and broader regressions. Locally,
+  21 server tests, 4 packaging tests, and 7 Node tests passed.
+- Security/world-data/CDN review: see `docs/SECURITY_REVIEW.md` and
+  `docs/DEPENDENCY_AUDIT.md`. Confirmed release blockers remain open.
+
+**Next decisions:** recommend Python 3.11+ to allow patched dependencies, and
+per-world clocks/showcase with explicit migration. No support-floor or data
+migration change was made without a decision. Fix confirmed security/state
+findings, resolve CDN dependencies, run remote CI, and perform the disposable
+Foundry checklist before release. The original readiness scope follows.
+
 ### Step 4: User-facing documentation and examples
 
 - Expand the README into a complete guide to current features, with screenshots.

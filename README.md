@@ -7,6 +7,10 @@ Try the [fictional sample vault](examples/README.md) without using campaign data
 See [backups, upgrades, and troubleshooting](docs/OPERATIONS.md) before changing a live setup.
 See the [release validation record](docs/RELEASE_VALIDATION.md) for tested versus pending platforms.
 
+**Pre-release status:** the [security review](docs/SECURITY_REVIEW.md) has open
+release blockers. Use only trusted local data; do not expose the server publicly
+or treat the current build as security-hardened or offline-ready.
+
 ```
 web UI (localhost:4000)  <-ws->  Python server  <-ws->  Foundry module (GM's browser)
 ```

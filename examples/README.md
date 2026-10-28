@@ -36,6 +36,9 @@ Use a disposable dnd5e test world, not a running campaign.
 If the actor or its artwork is missing, loading reports an error. Merely having
 an NPC note does not satisfy the existing-actor/artwork requirement. Omitting
 the `NPCs` line is appropriate when you only want scene activation.
+The current UI can attempt to sync a missing actor from the note before failing
+on missing artwork. Pre-create the actors as instructed, and inspect the test
+world after errors; encounter loading is not an all-or-nothing actor transaction.
 
 ## Files and expected behavior
 

@@ -4,6 +4,12 @@ This is an evidence log, not a blanket support claim. A configured CI job is not
 a passing result. No public release, push, or remote tag was performed during
 this validation work.
 
+**Release status: blocked.** The [security review](SECURITY_REVIEW.md) confirms
+unsafe Markdown execution, vault symlink escape, missing HTTP Host validation,
+stale world scenes, and failing runtime dependency auditing. Offline/CDN and
+cross-world overlay policies also need resolution. Passing functional tests
+does not clear these findings.
+
 ## Fresh installation
 
 Run from the repository root:

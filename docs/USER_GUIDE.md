@@ -87,6 +87,9 @@ adds NPC portraits while preserving existing showcase artwork. It does not
 start combat or place tokens. Omitting `Scene` leaves the active scene unchanged;
 omitting `NPCs` adds no portraits. On a missing-scene/actor/artwork error, correct
 the Foundry content or note and retry; do not assume the encounter loaded.
+The current UI may auto-sync a missing NPC from its vault note before retrying.
+An actor can therefore be created even if later artwork validation fails. Prepare
+existing actors with artwork first, and check the test world after a failed load.
 
 ## Notes and linked-note drawer
 

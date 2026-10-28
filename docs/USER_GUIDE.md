@@ -5,6 +5,7 @@ UI talks to a Python server; the bridge in the GM's Foundry browser executes
 Foundry actions. Players do not need to open the companion.
 
 Start with [installation and vault configuration](../README.md#install).
+For routine maintenance, see [backups, upgrades, and troubleshooting](OPERATIONS.md).
 Use one GM connection and a local Foundry browser at `localhost` or `127.0.0.1`.
 Hosted Foundry, multiple simultaneous worlds, and remote access are not supported.
 

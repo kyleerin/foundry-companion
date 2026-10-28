@@ -8,8 +8,7 @@
   "download": "https://github.com/kyleerin/foundry-companion/releases/download/v0.1.0/dm-companion.zip",
   "license": "LICENSE",
   "compatibility": {
-    "minimum": "13",
-    "verified": "14"
+    "minimum": "14.369"
   },
   "authors": [{ "name": "Kyle" }],
   "esmodules": ["scripts/bridge.js"]

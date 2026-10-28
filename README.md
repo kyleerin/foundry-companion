@@ -213,9 +213,10 @@ Creating/pushing a tag alone does not publish a release. Neither local builds no
 ordinary CI publish anything. Stable releases only are supported by this workflow;
 prerelease channels need a separate update-manifest policy.
 
-Archive validation is not a live Foundry compatibility test. Installation and
-updating in Foundry, and the advertised Foundry 13–14 compatibility range, still
-need release verification.
+Archive validation is not a live Foundry compatibility test. The release target
+is Foundry 14.369 + dnd5e 6.0.6; the module minimum is 14.369 and no `verified`
+version is declared until the [live integration checklist](docs/FOUNDRY_VALIDATION.md)
+passes. Installation/update and other version combinations remain unverified.
 
 ## Layout
 - `server/server.py` — aiohttp server; serves the UI and relays messages

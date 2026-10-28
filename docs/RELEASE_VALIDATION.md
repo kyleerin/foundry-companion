@@ -45,3 +45,10 @@ compatibility floor, not a recommendation to use an end-of-life interpreter.
   mapping/tasks, relationship nodes, improv tables, and every wikilink.
 - Backup/restore procedures are documented; a real Foundry backup restore has
   not been performed as part of these checks.
+
+## Foundry and system compatibility
+
+Installed manifests confirm Foundry 14.369 and dnd5e 6.0.6. No live Foundry server
+was reachable on port 30000, so integration is **pending**, not passed.
+The module no longer advertises Foundry 13 or an untested `verified` version.
+See the [disposable-world checklist](FOUNDRY_VALIDATION.md) before release.

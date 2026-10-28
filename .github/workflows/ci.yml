@@ -1,0 +1,56 @@
+name: Companion regression checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, release/v1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    env:
+      DMC_VAULT_DIR: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Fresh and repeated install with real server smoke
+        run: python tools/validate_install.py
+      - name: Set up test environment
+        run: |
+          python setup_env.py
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "VENV_PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "VENV_PY=.venv/bin/python" >> "$GITHUB_ENV"
+          fi
+      - name: Python regressions and package validation
+        run: |
+          "$VENV_PY" -m unittest discover -s server -p 'test_*.py' -v
+          "$VENV_PY" -m unittest test_build_module -v
+          "$VENV_PY" build_module.py
+          "$VENV_PY" -m compileall -q server setup_env.py build_module.py tools/validate_install.py
+      - name: JavaScript regressions and syntax
+        run: |
+          node --test tests/bridge.test.cjs
+          node --check foundry-module/scripts/bridge.js
+          node tools/check_web.cjs
+          node --check docs/capture-guide.cjs
+      - name: Whitespace
+        run: git diff --check

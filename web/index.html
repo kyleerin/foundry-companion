@@ -735,7 +735,7 @@
       return panel;
     }
     if (!state.players.length) {
-      panel.append(el("span", "text-sm text-base-content/60", "No notes found in Players."));
+      panel.append(el("span", "text-sm text-base-content/60", "No player notes found. Check vault settings in config.json."));
       return panel;
     }
 
@@ -1009,7 +1009,7 @@
       `${state.encounters.length} encounter${state.encounters.length === 1 ? "" : "s"}`));
 
     if (state.sessions === null || (state.session && state.encounters === null)) return wrap.append(emptyState("Loading…", true));
-    if (!state.sessions.length) return wrap.append(emptyState("No session notes found in Story/Act 1/Sessions."));
+    if (!state.sessions.length) return wrap.append(emptyState("No session notes found. Check vault settings in config.json."));
     if (!state.encounters.length) return wrap.append(emptyState(`${state.session} has no encounters listed. Add [[links]] under an "Encounters" heading.`));
 
     const list = el("div", "flex flex-col gap-3");
@@ -1023,7 +1023,7 @@
     wrap.append(sessionBar());
 
     if (state.sessions === null || (state.session && state.note === null)) return wrap.append(emptyState("Loading…", true));
-    if (!state.sessions.length) return wrap.append(emptyState("No session notes found in Story/Act 1/Sessions."));
+    if (!state.sessions.length) return wrap.append(emptyState("No session notes found. Check vault settings in config.json."));
     if (!state.note) return wrap.append(emptyState(`${state.session} is empty.`));
 
     const body = el("article", "md rounded-box border border-secondary/20 bg-base-100 p-6 shadow-lg");
@@ -1060,7 +1060,7 @@
     if (state.npcs === null) return root.append(emptyState("Loading…", true));
     const query = $("search").value.trim().toLowerCase();
     const npcs = state.npcs.filter((n) => !query || Object.values(n).some((v) => v.toLowerCase().includes(query)));
-    if (!npcs.length) return root.append(emptyState(query ? "No NPCs match your search." : "No notes found in NPCs."));
+    if (!npcs.length) return root.append(emptyState(query ? "No NPCs match your search." : "No NPC notes found. Check vault settings in config.json."));
 
     const grid = el("div", "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4");
     npcs.forEach((n) => grid.append(npcCard(n)));
@@ -1152,7 +1152,7 @@
 
   function renderImprov(root) {
     if (state.improv === null) return root.append(emptyState("Loading…", true));
-    if (!state.improv.tables.length) return root.append(emptyState('No roll tables found. Add "## Title (d10)" headings with a table under them to Story/improv.md.'));
+    if (!state.improv.tables.length) return root.append(emptyState('No roll tables found. Set improv_note in config.json to a vault note with "## Title (d10)" headings followed by Markdown tables.'));
 
     const bar = el("div", "mb-4 flex flex-wrap items-center gap-2");
     bar.append(button("New NPC", "btn-sm btn-primary font-display tracking-wide", newImprovNpc, { iconPath: ICONS.dice }));
@@ -1434,7 +1434,7 @@
 
   function renderPlayers(root) {
     if (state.players === null) return root.append(emptyState("Loading…", true));
-    if (!state.players.length) return root.append(emptyState("No notes found in Players."));
+    if (!state.players.length) return root.append(emptyState("No player notes found. Check vault settings in config.json."));
 
     if (state.playerDashboard) {
       const bar = el("div", "mb-4 flex");
@@ -1703,7 +1703,7 @@
       return panel;
     }
     if (!state.players.length) {
-      panel.append(el("span", "text-sm text-base-content/60", "No notes found in Players."));
+      panel.append(el("span", "text-sm text-base-content/60", "No player notes found. Check vault settings in config.json."));
       return panel;
     }
     const shownFor = (p) => state.showcase.filter((i) => i.shown && sameName(i.name, p.name));

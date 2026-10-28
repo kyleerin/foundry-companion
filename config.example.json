@@ -1,0 +1,9 @@
+{
+  "vault_dir": null,
+  "sessions_dir": "Sessions",
+  "npcs_dir": "NPCs",
+  "players_dir": "Players",
+  "factions_dir": "Factions",
+  "locations_dir": "Locations",
+  "improv_note": "improv.md"
+}
